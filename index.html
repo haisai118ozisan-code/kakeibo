@@ -369,12 +369,14 @@ function init(){
   renderAll();initGoogleAuth();applyDueRepeats();
 }
 function loadLocal(){
-  try{const d=JSON.parse(localStorage.getItem(SK));if(d?.records)records=d.records}catch{}
-  try{const r=JSON.parse(localStorage.getItem(RSK));if(r)repeats=r}catch{}
+  // localStorageからは読み込まない（Driveのみ）
 }
 function saveLocal(){
-  try{localStorage.setItem(SK,JSON.stringify({records}))}catch{}
-  try{localStorage.setItem(RSK,JSON.stringify(repeats))}catch{}
+  // localStorageには保存しない（Driveのみ）
+  // 未保存マーカーだけ管理
+  if(!accessToken){
+    showSyncMsg("⚠️ Drive未連携");
+  }
 }
 function loadApiKey(){
   try{apiKey=localStorage.getItem(API_SK)||""}catch{}
@@ -415,14 +417,24 @@ function googleLogin(){
     const tc=google.accounts.oauth2.initTokenClient({
       client_id:CLIENT_ID,scope:SCOPES,
       callback:(tr)=>{
-        if(tr.error)return;
+        if(tr.error){
+          const el=document.getElementById("login-area");
+          if(el){const s=document.createElement("span");s.style.cssText="color:#ff6b6b;font-size:10px;font-weight:700";s.textContent="⚠️ "+tr.error;el.appendChild(s);setTimeout(()=>s.remove(),4000);}
+          return;
+        }
         accessToken=tr.access_token;
         clearTimeout(tokenTimer);tokenTimer=setTimeout(refreshToken,55*60*1000);
         renderLoginArea();loadFromDrive();
+      },
+      error_callback:(err)=>{
+        console.log("OAuth error:",err);
       }
     });
-    tc.requestAccessToken({prompt:googleUser?"":""});
-  }catch(e){alert("ログインに失敗しました。ページを再読み込みしてください。")}
+    tc.requestAccessToken({prompt:'select_account'});
+  }catch(e){
+    console.error("Login error:",e);
+    alert("ログインに失敗しました。\n\nブラウザのポップアップを許可してから再試行してください。\n\nURL: "+location.href);
+  }
 }
 function refreshToken(){
   try{
@@ -452,14 +464,18 @@ function renderLoginArea(){
   const b2=document.getElementById("login-btn2");
   const b3=document.getElementById("sync-btn2");
   const ds=document.getElementById("drive-status");
-  if(googleUser){
+  if(googleUser&&accessToken){
     el.innerHTML=`<img class="user-avatar" src="${googleUser.picture||""}" onerror="this.style.display='none'"><span class="user-name">${googleUser.name}</span><button class="sync-btn" onclick="syncDrive()">☁️</button>`;
     if(b2)b2.style.display="none";if(b3)b3.style.display="block";
-    if(ds)ds.textContent="✅ "+googleUser.email;
+    if(ds)ds.innerHTML="✅ "+googleUser.email+'<br><small style="color:#999">📁 マイドライブ/家計簿データv2.json に保存</small>';
+  }else if(googleUser){
+    el.innerHTML=`<button class="login-btn" onclick="googleLogin()" style="background:#ffe066;color:#cc7700">⚠️ 再連携</button>`;
+    if(b2)b2.style.display="block";if(b3)b3.style.display="none";
+    if(ds)ds.innerHTML='<span style="color:#cc7700">⚠️ Drive再接続が必要</span>';
   }else{
     el.innerHTML=`<button class="login-btn" onclick="googleLogin()">🔑 ログイン</button>`;
     if(b2)b2.style.display="block";if(b3)b3.style.display="none";
-    if(ds)ds.textContent="未ログイン";
+    if(ds)ds.innerHTML='<span style="color:#cc4444;font-weight:700">⚠️ 未連携：データ消失リスク</span>';
   }
 }
 async function loadFromDrive(){
