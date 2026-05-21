@@ -241,8 +241,9 @@ canvas#cc{display:none}
     </div>
     <div class="form-row">
       <div class="form-group">
-        <label class="form-label">店名・メモ</label>
-        <input type="text" class="form-input" id="add-shop" placeholder="例：イオン、給与">
+        <label class="form-label">店名・メモ（ｶﾀｶﾅ自動変換）</label>
+        <input type="text" class="form-input" id="add-shop" placeholder="例：ｲｵﾝ、給与" oninput="suggestShopName(this.value)">
+        <div id="shop-suggest"></div>
       </div>
       <div class="form-group">
         <label class="form-label">日付</label>
@@ -406,11 +407,43 @@ async function testApiKey(){
 function initGoogleAuth(){
   window.onGoogleLibraryLoad=()=>{
     try{
-      google.accounts.id.initialize({client_id:CLIENT_ID,callback:handleGoogleCallback,auto_select:true});
+      // ID Token方式で自動ログイン
+      google.accounts.id.initialize({
+        client_id:CLIENT_ID,
+        callback:handleGoogleCallback,
+        auto_select:true, // 自動選択
+        cancel_on_tap_outside:false
+      });
       const saved=localStorage.getItem("google_user");
-      if(saved){googleUser=JSON.parse(saved);renderLoginArea();refreshToken();}
+      if(saved){
+        googleUser=JSON.parse(saved);
+        renderLoginArea();
+        // トークン自動取得（アカウント選択画面を出さない）
+        silentTokenRefresh();
+      } else {
+        // 未ログイン時はOne Tapを表示
+        google.accounts.id.prompt();
+      }
     }catch(e){}
   };
+}
+function silentTokenRefresh(){
+  try{
+    const tc=google.accounts.oauth2.initTokenClient({
+      client_id:CLIENT_ID,scope:SCOPES,
+      callback:(tr)=>{
+        if(!tr.error){
+          accessToken=tr.access_token;
+          clearTimeout(tokenTimer);tokenTimer=setTimeout(silentTokenRefresh,55*60*1000);
+          renderLoginArea();loadFromDrive();
+        }else{
+          // サイレント失敗時は再ログインボタンを表示
+          renderLoginArea();
+        }
+      }
+    });
+    tc.requestAccessToken({prompt:''}); // プロンプトなし
+  }catch(e){renderLoginArea();}
 }
 function googleLogin(){
   try{
@@ -441,17 +474,7 @@ function googleLogin(){
     alert("ログインに失敗しました。\nブラウザのポップアップを許可してください。");
   }
 }
-function refreshToken(){
-  try{
-    const tc=google.accounts.oauth2.initTokenClient({
-      client_id:CLIENT_ID,scope:SCOPES,
-      callback:(tr)=>{
-        if(!tr.error){accessToken=tr.access_token;clearTimeout(tokenTimer);tokenTimer=setTimeout(refreshToken,55*60*1000);}
-      }
-    });
-    tc.requestAccessToken({prompt:""});
-  }catch(e){}
-}
+function refreshToken(){silentTokenRefresh();}
 function handleGoogleCallback(response){
   try{
     const p=JSON.parse(atob(response.credential.split(".")[1]));
@@ -542,6 +565,44 @@ function calcNext(from,freq){
   else d.setMonth(d.getMonth()+1);
   return d.toISOString().split("T")[0];
 }
+// ===== 店名正規化 =====
+function normalizeShopName(name){
+  if(!name)return name;
+  name=name.replace(/[Ａ-Ｚａ-ｚ０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0));
+  const kanaMap={'ア':'ｱ','イ':'ｲ','ウ':'ｳ','エ':'ｴ','オ':'ｵ','カ':'ｶ','キ':'ｷ','ク':'ｸ','ケ':'ｹ','コ':'ｺ',
+    'サ':'ｻ','シ':'ｼ','ス':'ｽ','セ':'ｾ','ソ':'ｿ','タ':'ﾀ','チ':'ﾁ','ツ':'ﾂ','テ':'ﾃ','ト':'ﾄ',
+    'ナ':'ﾅ','ニ':'ﾆ','ヌ':'ﾇ','ネ':'ﾈ','ノ':'ﾉ','ハ':'ﾊ','ヒ':'ﾋ','フ':'ﾌ','ヘ':'ﾍ','ホ':'ﾎ',
+    'マ':'ﾏ','ミ':'ﾐ','ム':'ﾑ','メ':'ﾒ','モ':'ﾓ','ヤ':'ﾔ','ユ':'ﾕ','ヨ':'ﾖ',
+    'ラ':'ﾗ','リ':'ﾘ','ル':'ﾙ','レ':'ﾚ','ロ':'ﾛ','ワ':'ﾜ','ヲ':'ｦ','ン':'ﾝ',
+    'ァ':'ｧ','ィ':'ｨ','ゥ':'ｩ','ェ':'ｪ','ォ':'ｫ','ッ':'ｯ','ャ':'ｬ','ュ':'ｭ','ョ':'ｮ',
+    'ガ':'ｶﾞ','ギ':'ｷﾞ','グ':'ｸﾞ','ゲ':'ｹﾞ','ゴ':'ｺﾞ','ザ':'ｻﾞ','ジ':'ｼﾞ','ズ':'ｽﾞ','ゼ':'ｾﾞ','ゾ':'ｿﾞ',
+    'ダ':'ﾀﾞ','ヂ':'ﾁﾞ','ヅ':'ﾂﾞ','デ':'ﾃﾞ','ド':'ﾄﾞ','バ':'ﾊﾞ','ビ':'ﾋﾞ','ブ':'ﾌﾞ','ベ':'ﾍﾞ','ボ':'ﾎﾞ',
+    'パ':'ﾊﾟ','ピ':'ﾋﾟ','プ':'ﾌﾟ','ペ':'ﾍﾟ','ポ':'ﾎﾟ','ヴ':'ｳﾞ','ー':'ｰ','・':'･'};
+  name=name.replace(/[ァ-ヶーｰ・]/g,c=>kanaMap[c]||c);
+  return name.trim().replace(/\s+/g,' ');
+}
+function findSimilarShop(name){
+  const norm=normalizeShopName(name).toLowerCase().replace(/[\s　]/g,'');
+  const shops=[...new Set(records.map(r=>r.shop).filter(Boolean))];
+  return shops.find(s=>{
+    const sn=normalizeShopName(s).toLowerCase().replace(/[\s　]/g,'');
+    return sn===norm||(sn.length>2&&(sn.includes(norm)||norm.includes(sn)));
+  })||null;
+}
+function suggestShopName(val){
+  const norm=normalizeShopName(val);
+  document.getElementById("add-shop").value=norm;
+  const similar=findSimilarShop(norm);
+  const sug=document.getElementById("shop-suggest");
+  if(sug)sug.innerHTML=similar&&similar!==norm
+    ?`<div onclick="useShopSuggest(this)" data-name="${similar.replace(/"/g,'&quot;')}" style="background:#fff8eb;border:1px solid #ff9500;border-radius:6px;padding:6px 10px;font-size:11px;cursor:pointer;margin-top:4px">💡 「${similar}」と同じ店？ <span style="color:#e74c3c;font-weight:700">→ 使う</span></div>`
+    :'';
+}
+function useShopSuggest(el){
+  document.getElementById("add-shop").value=el.dataset.name;
+  document.getElementById("shop-suggest").innerHTML='';
+}
+
 // カテゴリ
 function getCats(type){return type==="income"?INCOME_CATS:EXPENSE_CATS}
 function getCat(type,id){return getCats(type).find(c=>c.id===id)||{label:"その他",icon:"📌",color:"#95a5a6"}}
@@ -586,6 +647,19 @@ function clearImg(){
   document.getElementById("ocr-btn").style.display="none";
   document.getElementById("clear-img-btn").style.display="none";
 }
+// トリミング用イベントを一度だけ登録
+let _cropEventsAdded=false;
+function initCropEvents(){
+  if(_cropEventsAdded)return;
+  _cropEventsAdded=true;
+  const canvas=document.getElementById("crop-canvas-el");
+  canvas.addEventListener("touchstart",cropStart,{passive:false});
+  canvas.addEventListener("touchmove",cropMove,{passive:false});
+  canvas.addEventListener("touchend",cropEnd,{passive:false});
+  canvas.addEventListener("mousedown",cropStart);
+  window.addEventListener("mousemove",cropMove);
+  window.addEventListener("mouseup",cropEnd);
+}
 function startCrop(dataUrl){
   const cropArea=document.getElementById("crop-area");
   const canvas=document.getElementById("crop-canvas-el");
@@ -594,16 +668,13 @@ function startCrop(dataUrl){
   img.onload=()=>{
     const maxW=Math.min(window.innerWidth-28,600);
     canvas.width=img.width;canvas.height=img.height;
-    canvas.style.width=maxW+"px";canvas.style.height=Math.round(img.height*(maxW/img.width))+"px";
+    canvas.style.width=maxW+"px";
+    canvas.style.height=Math.round(img.height*(maxW/img.width))+"px";
     const ctx=canvas.getContext("2d");ctx.drawImage(img,0,0);
-    cropState={img,x:img.width*0.05,y:img.height*0.05,w:img.width*0.9,h:img.height*0.9,drag:false,mode:null};
+    cropState={img,x:img.width*0.05,y:img.height*0.05,w:img.width*0.9,h:img.height*0.9,
+               drag:false,mode:null,dp:null,ox:0,oy:0,ow:0,oh:0};
     drawCrop();
-    canvas.addEventListener("touchstart",cropStart,{passive:false});
-    canvas.addEventListener("touchmove",cropMove,{passive:false});
-    canvas.addEventListener("touchend",cropEnd);
-    canvas.addEventListener("mousedown",cropStart);
-    canvas.addEventListener("mousemove",cropMove);
-    canvas.addEventListener("mouseup",cropEnd);
+    initCropEvents();
   };img.src=dataUrl;
 }
 function getPos(e,cv){
@@ -613,34 +684,72 @@ function getPos(e,cv){
   return{x:(src.clientX-r.left)*sx,y:(src.clientY-r.top)*sy};
 }
 function cropStart(e){
+  if(!cropState)return;
   e.preventDefault();
   const cv=document.getElementById("crop-canvas-el");
   const p=getPos(e,cv);const cs=cropState;
-  const handles=[{m:"tl",x:cs.x,y:cs.y},{m:"tr",x:cs.x+cs.w,y:cs.y},{m:"bl",x:cs.x,y:cs.y+cs.h},{m:"br",x:cs.x+cs.w,y:cs.y+cs.h}];
-  for(const h of handles){if(Math.abs(p.x-h.x)<22&&Math.abs(p.y-h.y)<22){cs.drag=true;cs.mode=h.m;cs.dp=p;return}}
-  if(p.x>cs.x&&p.x<cs.x+cs.w&&p.y>cs.y&&p.y<cs.y+cs.h){cs.drag=true;cs.mode="mv";cs.dp=p;cs.ox=cs.x;cs.oy=cs.y}
+  const ht=40;
+  const handles=[
+    {m:"tl",x:cs.x,y:cs.y},{m:"tr",x:cs.x+cs.w,y:cs.y},
+    {m:"bl",x:cs.x,y:cs.y+cs.h},{m:"br",x:cs.x+cs.w,y:cs.y+cs.h}
+  ];
+  for(const h of handles){
+    if(Math.abs(p.x-h.x)<ht&&Math.abs(p.y-h.y)<ht){
+      cs.drag=true;cs.mode=h.m;cs.dp={x:p.x,y:p.y};
+      cs.ox=cs.x;cs.oy=cs.y;cs.ow=cs.w;cs.oh=cs.h;return;
+    }
+  }
+  if(p.x>cs.x&&p.x<cs.x+cs.w&&p.y>cs.y&&p.y<cs.y+cs.h){
+    cs.drag=true;cs.mode="mv";cs.dp={x:p.x,y:p.y};cs.ox=cs.x;cs.oy=cs.y;
+  }
 }
 function cropMove(e){
-  e.preventDefault();const cs=cropState;if(!cs?.drag)return;
+  if(!cropState?.drag)return;
+  e.preventDefault();
   const cv=document.getElementById("crop-canvas-el");
-  const p=getPos(e,cv);const dx=p.x-cs.dp.x,dy=p.y-cs.dp.y;const mn=40;
-  if(cs.mode==="mv"){cs.x=Math.max(0,Math.min(cs.ox+dx,cv.width-cs.w));cs.y=Math.max(0,Math.min(cs.oy+dy,cv.height-cs.h))}
-  else if(cs.mode==="tl"){const nx=Math.min(p.x,cs.x+cs.w-mn);const ny=Math.min(p.y,cs.y+cs.h-mn);cs.w+=cs.x-nx;cs.h+=cs.y-ny;cs.x=nx;cs.y=ny}
-  else if(cs.mode==="tr"){cs.w=Math.max(mn,p.x-cs.x);const ny=Math.min(p.y,cs.y+cs.h-mn);cs.h+=cs.y-ny;cs.y=ny}
-  else if(cs.mode==="bl"){const nx=Math.min(p.x,cs.x+cs.w-mn);cs.w+=cs.x-nx;cs.x=nx;cs.h=Math.max(mn,p.y-cs.y)}
-  else if(cs.mode==="br"){cs.w=Math.max(mn,p.x-cs.x);cs.h=Math.max(mn,p.y-cs.y)}
+  const p=getPos(e,cv);const cs=cropState;
+  const dx=p.x-cs.dp.x,dy=p.y-cs.dp.y;const mn=50;
+  if(cs.mode==="mv"){
+    cs.x=Math.max(0,Math.min(cs.ox+dx,cv.width-cs.w));
+    cs.y=Math.max(0,Math.min(cs.oy+dy,cv.height-cs.h));
+  }else if(cs.mode==="tl"){
+    const nx=Math.max(0,Math.min(cs.ox+dx,cs.ox+cs.ow-mn));
+    const ny=Math.max(0,Math.min(cs.oy+dy,cs.oy+cs.oh-mn));
+    cs.w=cs.ox+cs.ow-nx;cs.h=cs.oy+cs.oh-ny;cs.x=nx;cs.y=ny;
+  }else if(cs.mode==="tr"){
+    const ny=Math.max(0,Math.min(cs.oy+dy,cs.oy+cs.oh-mn));
+    cs.w=Math.max(mn,Math.min(cs.ow+dx,cv.width-cs.x));
+    cs.h=cs.oy+cs.oh-ny;cs.y=ny;
+  }else if(cs.mode==="bl"){
+    const nx=Math.max(0,Math.min(cs.ox+dx,cs.ox+cs.ow-mn));
+    cs.w=cs.ox+cs.ow-nx;cs.x=nx;
+    cs.h=Math.max(mn,Math.min(cs.oh+dy,cv.height-cs.y));
+  }else if(cs.mode==="br"){
+    cs.w=Math.max(mn,Math.min(cs.ow+dx,cv.width-cs.x));
+    cs.h=Math.max(mn,Math.min(cs.oh+dy,cv.height-cs.y));
+  }
   drawCrop();
 }
-function cropEnd(){if(cropState)cropState.drag=false}
+function cropEnd(){if(cropState)cropState.drag=false;}
 function drawCrop(){
   const cs=cropState;if(!cs)return;
   const cv=document.getElementById("crop-canvas-el");const ctx=cv.getContext("2d");
   ctx.clearRect(0,0,cv.width,cv.height);ctx.drawImage(cs.img,0,0);
-  ctx.fillStyle="rgba(0,0,0,0.5)";ctx.fillRect(0,0,cv.width,cv.height);
-  ctx.clearRect(cs.x,cs.y,cs.w,cs.h);ctx.drawImage(cs.img,cs.x,cs.y,cs.w,cs.h,cs.x,cs.y,cs.w,cs.h);
-  ctx.strokeStyle="#fff";ctx.lineWidth=2;ctx.strokeRect(cs.x,cs.y,cs.w,cs.h);
+  ctx.fillStyle="rgba(0,0,0,0.55)";ctx.fillRect(0,0,cv.width,cv.height);
+  ctx.clearRect(cs.x,cs.y,cs.w,cs.h);
+  ctx.drawImage(cs.img,cs.x,cs.y,cs.w,cs.h,cs.x,cs.y,cs.w,cs.h);
+  ctx.strokeStyle="#fff";ctx.lineWidth=2.5;ctx.strokeRect(cs.x,cs.y,cs.w,cs.h);
+  // グリッド線
+  ctx.strokeStyle="rgba(255,255,255,0.35)";ctx.lineWidth=1;ctx.beginPath();
+  ctx.moveTo(cs.x+cs.w/3,cs.y);ctx.lineTo(cs.x+cs.w/3,cs.y+cs.h);
+  ctx.moveTo(cs.x+cs.w*2/3,cs.y);ctx.lineTo(cs.x+cs.w*2/3,cs.y+cs.h);
+  ctx.moveTo(cs.x,cs.y+cs.h/3);ctx.lineTo(cs.x+cs.w,cs.y+cs.h/3);
+  ctx.moveTo(cs.x,cs.y+cs.h*2/3);ctx.lineTo(cs.x+cs.w,cs.y+cs.h*2/3);
+  ctx.stroke();
+  // ハンドル（大きめ・スマホ対応）
   [{x:cs.x,y:cs.y},{x:cs.x+cs.w,y:cs.y},{x:cs.x,y:cs.y+cs.h},{x:cs.x+cs.w,y:cs.y+cs.h}].forEach(h=>{
-    ctx.fillStyle="#fff";ctx.beginPath();ctx.arc(h.x,h.y,9,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle="#fff";ctx.beginPath();ctx.arc(h.x,h.y,13,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle="#e74c3c";ctx.beginPath();ctx.arc(h.x,h.y,7,0,Math.PI*2);ctx.fill();
   });
 }
 function applyCrop(){
@@ -652,7 +761,7 @@ function applyCrop(){
   document.getElementById("add-img-preview").src=imgCropped;
   document.getElementById("crop-area").style.display="none";cropState=null;
 }
-function cancelCrop(){document.getElementById("crop-area").style.display="none";cropState=null}
+function cancelCrop(){document.getElementById("crop-area").style.display="none";cropState=null;}
 // OCR
 async function runOCRFromImg(){
   const dataUrl=imgCropped||imgDataUrl;if(!dataUrl||!apiKey)return;
