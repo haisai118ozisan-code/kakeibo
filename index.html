@@ -247,8 +247,8 @@ canvas#cc{display:none}
     </div>
     <div class="form-row">
       <div class="form-group">
-        <label class="form-label">店名・メモ（ｶﾀｶﾅ自動変換）</label>
-        <input type="text" class="form-input" id="add-shop" placeholder="例：ｲｵﾝ、給与" oninput="suggestShopName(this.value)">
+        <label class="form-label">店名・メモ</label>
+        <input type="text" class="form-input" id="add-shop" placeholder="例：イオン、給与">
         <div id="shop-suggest"></div>
       </div>
       <div class="form-group">
@@ -267,11 +267,12 @@ canvas#cc{display:none}
       <label class="form-label">📸 レシート画像（任意）</label>
       <img id="add-img-preview" class="img-preview" style="display:none">
       <div id="crop-area" style="display:none">
+        <div style="font-size:10px;color:#666;margin-bottom:4px">✂️ トリミング範囲を確認・調整してください（自動検出済み）</div>
         <div class="crop-canvas-wrap">
           <canvas id="crop-canvas-el" class="crop-canvas-el"></canvas>
         </div>
         <div style="display:flex;gap:6px;margin-bottom:8px">
-          <button class="img-btn" style="background:var(--accent);color:#fff" onclick="applyCrop()">✂️ トリミング確定</button>
+          <button class="img-btn" style="background:var(--accent);color:#fff" onclick="applyCrop()">✂️ この範囲で確定</button>
           <button class="img-btn" onclick="cancelCrop()">キャンセル</button>
         </div>
       </div>
@@ -366,9 +367,8 @@ let repeatType="expense",repeatCat="other",repeatFreq="monthly";
 let currentRepeat="none";
 let imgDataUrl=null,imgCropped=null,cropState=null;
 let googleUser=null,accessToken=null,driveFileId=null,tokenTimer=null;
-let budgets={}; // {catId: 金額}
+let budgets={};
 
-// ===== 予算管理 =====
 function renderBudgetList(){
   const el=document.getElementById("budget-list");if(!el)return;
   el.innerHTML=EXPENSE_CATS.map(c=>{
@@ -386,28 +386,17 @@ function saveBudgets(){
     const v=parseFloat(document.getElementById(`bg_${c.id}`).value);
     if(v>0)budgets[c.id]=v;else delete budgets[c.id];
   });
-  saveLocal();if(accessToken)syncDrive();
+  if(accessToken)syncDrive();
   showSyncMsg("✅ 予算保存");
 }
-
 function init(){
   const now=new Date();
   currentYM={y:now.getFullYear(),m:now.getMonth()+1};
   selectedDate=now.toISOString().split("T")[0];
-  loadLocal();loadApiKey();
+  loadApiKey();
   document.getElementById("add-date").value=selectedDate;
   document.getElementById("r-startdate").value=selectedDate;
   renderAll();initGoogleAuth();applyDueRepeats();
-}
-function loadLocal(){
-  // localStorageからは読み込まない（Driveのみ）
-}
-function saveLocal(){
-  // localStorageには保存しない（Driveのみ）
-  // 未保存マーカーだけ管理
-  if(!accessToken){
-    showSyncMsg("⚠️ Drive未連携");
-  }
 }
 function loadApiKey(){
   try{apiKey=localStorage.getItem(API_SK)||""}catch{}
@@ -433,87 +422,101 @@ async function testApiKey(){
     else{el.textContent="✅ 接続成功！";el.style.color="#27ae60"}
   }catch(e){el.textContent="❌ 通信エラー";el.style.color="#cc4444"}
 }
-// Google Auth（ログイン維持）
+
+// ===== Google Auth: 完全自動ログイン維持 =====
 function initGoogleAuth(){
-  window.onGoogleLibraryLoad=()=>{
+  // ライブラリ読み込み確認
+  const tryInit=()=>{
+    if(!window.google||!google.accounts){setTimeout(tryInit,300);return;}
     try{
+      // ID Token方式の初期化（一度承認すれば毎回自動で取得可能）
       google.accounts.id.initialize({
         client_id:CLIENT_ID,
         callback:handleGoogleCallback,
         auto_select:true,
         cancel_on_tap_outside:false,
-        use_fedcm_for_prompt:false
       });
       const saved=localStorage.getItem("google_user");
       if(saved){
-        googleUser=JSON.parse(saved);
+        try{googleUser=JSON.parse(saved);}catch{googleUser=null;}
         renderLoginArea();
-        // 即座にサイレントでトークン取得
+        // サイレントでトークン取得（ユーザー操作なし）
         silentTokenRefresh();
+      }else{
+        renderLoginArea();
       }
-      // 未ログイン時もOne Tapを表示しない（手動ログインに任せる）
-    }catch(e){console.log("Auth init error:",e);}
+    }catch(e){console.log("Auth init error:",e);renderLoginArea();}
   };
+  if(window.onGoogleLibraryLoad===undefined){
+    window.onGoogleLibraryLoad=tryInit;
+  }
+  tryInit();
 }
 function silentTokenRefresh(){
+  if(!window.google||!google.accounts)return;
   try{
     const tc=google.accounts.oauth2.initTokenClient({
       client_id:CLIENT_ID,scope:SCOPES,
       callback:(tr)=>{
         if(!tr.error){
           accessToken=tr.access_token;
-          clearTimeout(tokenTimer);tokenTimer=setTimeout(silentTokenRefresh,55*60*1000);
-          renderLoginArea();loadFromDrive();
+          clearTimeout(tokenTimer);
+          // 55分後に自動更新
+          tokenTimer=setTimeout(silentTokenRefresh,55*60*1000);
+          renderLoginArea();
+          if(records.length===0)loadFromDrive();
+          showSyncMsg("☁️ 自動接続");
         }else{
-          // サイレント失敗時は再ログインボタンを表示
+          // サイレント失敗→ボタン表示
+          accessToken=null;
           renderLoginArea();
         }
       }
     });
-    tc.requestAccessToken({prompt:''}); // プロンプトなし
+    // promptなし＝サイレント（既に許可済みなら成功）
+    tc.requestAccessToken({prompt:''});
   }catch(e){renderLoginArea();}
 }
 function googleLogin(){
+  if(!window.google||!google.accounts){alert("Googleライブラリ未読込。再読み込みしてください。");return;}
   try{
     const tc=google.accounts.oauth2.initTokenClient({
       client_id:CLIENT_ID,scope:SCOPES,
       callback:(tr)=>{
         if(tr.error){
-          const el=document.getElementById("login-area");
-          if(el){const s=document.createElement("span");s.style.cssText="color:#ff6b6b;font-size:10px;font-weight:700;margin-left:6px";s.textContent="⚠️ "+tr.error;el.appendChild(s);setTimeout(()=>s.remove(),5000);}
-          return;
+          showSyncMsg("⚠️ "+tr.error);return;
         }
         accessToken=tr.access_token;
-        clearTimeout(tokenTimer);tokenTimer=setTimeout(refreshToken,55*60*1000);
-        // ユーザー情報保存
+        clearTimeout(tokenTimer);
+        tokenTimer=setTimeout(silentTokenRefresh,55*60*1000);
         if(!googleUser||!googleUser.name)googleUser={connected:true,name:"接続済み"};
         localStorage.setItem("google_user",JSON.stringify(googleUser));
         renderLoginArea();loadFromDrive();
       },
-      error_callback:(err)=>{
-        console.log("OAuth error:",err.type);
-      }
+      error_callback:(err)=>{showSyncMsg("⚠️ "+err.type);}
     });
-    // 初回は必ずconsentを表示してDrive権限を付与させる
+    // 初回はconsent、2回目以降は省略
     const hasToken=localStorage.getItem("google_user");
-    tc.requestAccessToken({prompt: hasToken ? '' : 'consent'});
+    tc.requestAccessToken({prompt:hasToken?'':'consent'});
   }catch(e){
-    console.error("Login error:",e);
-    alert("ログインに失敗しました。\nブラウザのポップアップを許可してください。");
+    alert("ログインエラー: "+e.message);
   }
 }
-function refreshToken(){silentTokenRefresh();}
 function handleGoogleCallback(response){
   try{
     const p=JSON.parse(atob(response.credential.split(".")[1]));
     googleUser={name:p.name,email:p.email,picture:p.picture};
     localStorage.setItem("google_user",JSON.stringify(googleUser));
-    googleLogin();
+    silentTokenRefresh();
   }catch(e){}
 }
 function googleLogout(){
+  if(!confirm("ログアウトしますか？\n（次回起動時に再ログインが必要になります）"))return;
   googleUser=null;accessToken=null;driveFileId=null;
-  clearTimeout(tokenTimer);localStorage.removeItem("google_user");renderLoginArea();
+  clearTimeout(tokenTimer);
+  localStorage.removeItem("google_user");
+  try{google.accounts.id.disableAutoSelect();}catch(e){}
+  renderLoginArea();
 }
 function renderLoginArea(){
   const el=document.getElementById("login-area");
@@ -525,7 +528,7 @@ function renderLoginArea(){
     const pic=googleUser.picture||"";
     el.innerHTML=`${pic?`<img class="user-avatar" src="${pic}" onerror="this.style.display='none'">`:""}${name?`<span class="user-name">${name}</span>`:""}<button class="sync-btn" onclick="syncDrive()">☁️</button>`;
     if(b2)b2.style.display="none";if(b3)b3.style.display="block";
-    if(ds)ds.innerHTML="✅ "+googleUser.email+'<br><small style="color:#999">📁 マイドライブ/家計簿データv2.json に保存</small>';
+    if(ds)ds.innerHTML="✅ "+(googleUser.email||"接続済み")+'<br><small style="color:#999">📁 マイドライブ/家計簿データv2.json に保存</small><br><a href="#" onclick="event.preventDefault();googleLogout()" style="color:#cc4444;font-size:10px">ログアウト</a>';
   }else if(googleUser){
     el.innerHTML=`<button class="login-btn" onclick="googleLogin()" style="background:#ffe066;color:#cc7700">⚠️ 再連携</button>`;
     if(b2)b2.style.display="block";if(b3)b3.style.display="none";
@@ -546,10 +549,8 @@ async function loadFromDrive(){
       const fr=await fetch("https://www.googleapis.com/drive/v3/files/"+driveFileId+"?alt=media",{headers:{Authorization:"Bearer "+accessToken}});
       const json=await fr.json();
       if(json.records){
-        const merged=[...json.records];
-        records.forEach(r=>{if(!merged.find(m=>m.id===r.id))merged.push(r)});
-        records=merged.sort((a,b)=>b.date.localeCompare(a.date));
-        saveLocal();renderAll();
+        records=json.records.sort((a,b)=>b.date.localeCompare(a.date));
+        renderAll();
       }
       if(json.repeats)repeats=json.repeats;
       if(json.budgets)budgets=json.budgets;
@@ -558,7 +559,7 @@ async function loadFromDrive(){
   }catch(e){showSyncMsg("⚠️ 読込エラー")}
 }
 async function syncDrive(){
-  if(!accessToken){refreshToken();setTimeout(syncDrive,2000);return}
+  if(!accessToken){silentTokenRefresh();setTimeout(syncDrive,2000);return}
   try{
     const body=JSON.stringify({records,repeats,budgets});
     if(driveFileId){
@@ -572,7 +573,7 @@ async function syncDrive(){
   }catch(e){showSyncMsg("⚠️ 保存エラー")}
 }
 function showSyncMsg(msg){
-  const el=document.getElementById("login-area");
+  const el=document.getElementById("login-area");if(!el)return;
   const s=document.createElement("span");s.className="sync-msg";s.textContent=msg;
   el.appendChild(s);setTimeout(()=>s.remove(),3000);
 }
@@ -584,7 +585,7 @@ function applyDueRepeats(){
     if(!records.find(rec=>rec.repeatId===r.id&&rec.date===today)){
       records.unshift({id:Date.now().toString(36)+Math.random().toString(36).slice(2,5),type:r.type,shop:r.name,amount:r.amount,date:today,cat:r.cat,repeatId:r.id,items:[],imgUrl:null});
     }
-    r.nextDate=calcNext(today,r.freq);saveLocal();
+    r.nextDate=calcNext(today,r.freq);
   });
 }
 function calcNext(from,freq){
@@ -594,20 +595,11 @@ function calcNext(from,freq){
   else d.setMonth(d.getMonth()+1);
   return d.toISOString().split("T")[0];
 }
-// ===== 店名正規化 =====
+// ===== 店名処理（カタカナ半角廃止） =====
 function normalizeShopName(name){
   if(!name)return name;
+  // 全角英数→半角のみ（カタカナはそのまま）
   name=name.replace(/[Ａ-Ｚａ-ｚ０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0));
-  const kanaMap={'ア':'ｱ','イ':'ｲ','ウ':'ｳ','エ':'ｴ','オ':'ｵ','カ':'ｶ','キ':'ｷ','ク':'ｸ','ケ':'ｹ','コ':'ｺ',
-    'サ':'ｻ','シ':'ｼ','ス':'ｽ','セ':'ｾ','ソ':'ｿ','タ':'ﾀ','チ':'ﾁ','ツ':'ﾂ','テ':'ﾃ','ト':'ﾄ',
-    'ナ':'ﾅ','ニ':'ﾆ','ヌ':'ﾇ','ネ':'ﾈ','ノ':'ﾉ','ハ':'ﾊ','ヒ':'ﾋ','フ':'ﾌ','ヘ':'ﾍ','ホ':'ﾎ',
-    'マ':'ﾏ','ミ':'ﾐ','ム':'ﾑ','メ':'ﾒ','モ':'ﾓ','ヤ':'ﾔ','ユ':'ﾕ','ヨ':'ﾖ',
-    'ラ':'ﾗ','リ':'ﾘ','ル':'ﾙ','レ':'ﾚ','ロ':'ﾛ','ワ':'ﾜ','ヲ':'ｦ','ン':'ﾝ',
-    'ァ':'ｧ','ィ':'ｨ','ゥ':'ｩ','ェ':'ｪ','ォ':'ｫ','ッ':'ｯ','ャ':'ｬ','ュ':'ｭ','ョ':'ｮ',
-    'ガ':'ｶﾞ','ギ':'ｷﾞ','グ':'ｸﾞ','ゲ':'ｹﾞ','ゴ':'ｺﾞ','ザ':'ｻﾞ','ジ':'ｼﾞ','ズ':'ｽﾞ','ゼ':'ｾﾞ','ゾ':'ｿﾞ',
-    'ダ':'ﾀﾞ','ヂ':'ﾁﾞ','ヅ':'ﾂﾞ','デ':'ﾃﾞ','ド':'ﾄﾞ','バ':'ﾊﾞ','ビ':'ﾋﾞ','ブ':'ﾌﾞ','ベ':'ﾍﾞ','ボ':'ﾎﾞ',
-    'パ':'ﾊﾟ','ピ':'ﾋﾟ','プ':'ﾌﾟ','ペ':'ﾍﾟ','ポ':'ﾎﾟ','ヴ':'ｳﾞ','ー':'ｰ','・':'･'};
-  name=name.replace(/[ァ-ヶーｰ・]/g,c=>kanaMap[c]||c);
   return name.trim().replace(/\s+/g,' ');
 }
 function findSimilarShop(name){
@@ -619,11 +611,10 @@ function findSimilarShop(name){
   })||null;
 }
 function suggestShopName(val){
-  const norm=normalizeShopName(val);
-  document.getElementById("add-shop").value=norm;
-  const similar=findSimilarShop(norm);
+  // カタカナ変換しない、ただスペース整形のみ
+  const similar=findSimilarShop(val);
   const sug=document.getElementById("shop-suggest");
-  if(sug)sug.innerHTML=similar&&similar!==norm
+  if(sug)sug.innerHTML=similar&&similar!==val.trim()
     ?`<div onclick="useShopSuggest(this)" data-name="${similar.replace(/"/g,'&quot;')}" style="background:#fff8eb;border:1px solid #ff9500;border-radius:6px;padding:6px 10px;font-size:11px;cursor:pointer;margin-top:4px">💡 「${similar}」と同じ店？ <span style="color:#e74c3c;font-weight:700">→ 使う</span></div>`
     :'';
 }
@@ -631,17 +622,16 @@ function useShopSuggest(el){
   document.getElementById("add-shop").value=el.dataset.name;
   document.getElementById("shop-suggest").innerHTML='';
 }
-
 // カテゴリ
 function getCats(type){return type==="income"?INCOME_CATS:EXPENSE_CATS}
 function getCat(type,id){return getCats(type).find(c=>c.id===id)||{label:"その他",icon:"📌",color:"#95a5a6"}}
 function detectCat(type,shop){
   const t=(shop||"").toLowerCase();
-  const m={food:["スーパー","イオン","コープ","業務","西友","食品"],eat_out:["マクドナルド","吉野家","すき家","レストラン","カフェ","弁当"],daily:["ドラッグ","ツルハ","マツキヨ","100均","ダイソー"],transport:["ガソリン","エネオス","駐車","電車","バス"],utility:["電気","ガス","水道"],housing:["家賃","管理費"],salary:["給与","給料"],bonus:["賞与","ボーナス"]};
+  const m={food:["スーパー","イオン","コープ","業務","西友","食品","フジ"],eat_out:["マクドナルド","吉野家","すき家","レストラン","カフェ","弁当"],daily:["ドラッグ","ツルハ","マツキヨ","100均","ダイソー"],transport:["ガソリン","エネオス","駐車","電車","バス"],utility:["電気","ガス","水道"],housing:["家賃","管理費"],salary:["給与","給料"],bonus:["賞与","ボーナス"]};
   for(const[id,kws]of Object.entries(m)){if(kws.some(k=>t.includes(k)))return id}
   return type==="income"?"other_in":"other";
 }
-// 画像・トリミング
+// 画像処理
 function compressImage(file){
   return new Promise(res=>{
     const img=new Image(),url=URL.createObjectURL(file);
@@ -666,9 +656,12 @@ document.getElementById("file-img").addEventListener("change",async e=>{
   document.getElementById("add-img-preview").src=imgDataUrl;
   document.getElementById("add-img-preview").style.display="block";
   document.getElementById("clear-img-btn").style.display="block";
-  startCrop(imgDataUrl);
-  // OCR自動実行
-  if(apiKey)runOCRFromImg();
+  // OCRを先に実行して、その結果で自動トリミング
+  if(apiKey){
+    await runOCRAndAutoCrop();
+  }else{
+    startCrop(imgDataUrl); // APIキーなしなら手動トリミング
+  }
 });
 function clearImg(){
   imgDataUrl=null;imgCropped=null;cropState=null;
@@ -677,7 +670,150 @@ function clearImg(){
   document.getElementById("clear-img-btn").style.display="none";
   const st=document.getElementById("ocr-status");if(st)st.textContent="";
 }
-// トリミング用イベントを一度だけ登録
+
+// ===== OCR + 自動トリミング =====
+async function runOCRAndAutoCrop(){
+  const dataUrl=imgDataUrl;if(!dataUrl||!apiKey)return;
+  const st=document.getElementById("ocr-status");
+  if(st){st.textContent="⏳ OCR解析中...";st.style.color="#f39c12";}
+  try{
+    const base64=dataUrl.split(",")[1];
+    const res=await fetch("https://vision.googleapis.com/v1/images:annotate?key="+apiKey,{
+      method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({requests:[{image:{content:base64},features:[{type:"DOCUMENT_TEXT_DETECTION"}],imageContext:{languageHints:["ja"]}}]})
+    });
+    const d=await res.json();
+    const fullText=d.responses?.[0]?.fullTextAnnotation;
+    const text=fullText?.text||"";
+    const parsed=parseReceipt(text);
+
+    // OCR結果でフォーム自動入力
+    if(parsed.shop&&!document.getElementById("add-shop").value){
+      const similar=findSimilarShop(parsed.shop);
+      document.getElementById("add-shop").value=similar||parsed.shop;
+      if(similar&&similar!==parsed.shop){
+        const sug=document.getElementById("shop-suggest");
+        if(sug)sug.innerHTML=`<div style="background:#edfaf3;border:1px solid #27ae60;border-radius:6px;padding:6px 10px;font-size:11px;margin-top:4px">✅ 既存「${similar}」に統一（元：${parsed.shop}）</div>`;
+      }
+    }
+    if(parsed.amount&&!document.getElementById("add-amount").value)document.getElementById("add-amount").value=parsed.amount;
+    if(parsed.date)document.getElementById("add-date").value=parsed.date;
+    parsed.items.forEach(i=>addItemRow(i.name,i.price));
+    if(parsed.shop){
+      selectedCat=detectCat(currentType,parsed.shop);
+      renderCatGrid("add-cat-grid",currentType);
+    }
+
+    // 自動トリミング範囲を計算（店名〜合計欄）
+    let autoCropBox=null;
+    if(fullText?.pages?.[0]?.blocks){
+      autoCropBox=detectReceiptBounds(fullText,parsed);
+    }
+
+    if(st){st.textContent="✅ OCR完了 - トリミング範囲を確認してください";st.style.color="#27ae60";setTimeout(()=>{if(st&&st.textContent.startsWith("✅"))st.textContent=""},5000);}
+
+    // 自動検出範囲でクロップ画面表示
+    startCrop(dataUrl,autoCropBox);
+  }catch(e){
+    if(st){st.textContent="❌ "+e.message;st.style.color="#cc4444";}
+    startCrop(dataUrl); // エラー時は手動トリミング
+  }
+}
+
+// OCRの結果から「店名行」と「合計行」の座標を検出してクロップ範囲を返す
+function detectReceiptBounds(fullText,parsed){
+  try{
+    if(!fullText.pages?.[0]?.blocks)return null;
+    const lines=[]; // {text, minY, maxY, minX, maxX}
+    fullText.pages[0].blocks.forEach(block=>{
+      block.paragraphs?.forEach(para=>{
+        para.words?.forEach(word=>{
+          const verts=word.boundingBox?.vertices||[];
+          if(!verts.length)return;
+          const xs=verts.map(v=>v.x||0),ys=verts.map(v=>v.y||0);
+          const text=(word.symbols||[]).map(s=>s.text).join("");
+          lines.push({text,minY:Math.min(...ys),maxY:Math.max(...ys),minX:Math.min(...xs),maxX:Math.max(...xs)});
+        });
+      });
+    });
+    if(!lines.length)return null;
+    // 「合計」「お会計」を含む行を探して下端とする
+    let bottomY=null;
+    const totalPat=/合計|お?会計|total/i;
+    lines.forEach(l=>{
+      if(totalPat.test(l.text)){
+        if(bottomY===null||l.maxY>bottomY)bottomY=l.maxY;
+      }
+    });
+    // 店名行（最上部の意味のある文字）を上端とする
+    let topY=null;
+    const sortedByY=[...lines].sort((a,b)=>a.minY-b.minY);
+    for(const l of sortedByY){
+      if(/[ぁ-んァ-ヶ一-龯a-zA-Z]/.test(l.text)){topY=l.minY;break;}
+    }
+    if(topY===null||bottomY===null)return null;
+    // 余白
+    const padding=20;
+    const minX=Math.min(...lines.map(l=>l.minX));
+    const maxX=Math.max(...lines.map(l=>l.maxX));
+    return {
+      x:Math.max(0,minX-padding),
+      y:Math.max(0,topY-padding),
+      w:(maxX-minX)+padding*2,
+      h:(bottomY-topY)+padding*2
+    };
+  }catch(e){return null;}
+}
+
+function parseReceipt(text){
+  const N=s=>s.replace(/[０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0)).replace(/[¥￥]/g,"¥");
+  const t=N(text);
+  let amounts=[];
+  [/合計[\s:：]*¥?\s*([0-9,]+)/g,/お?会計[\s:：]*¥?\s*([0-9,]+)/g,/¥\s*([0-9,]{3,})/g,/([0-9,]{3,})\s*円/g].forEach(p=>{
+    let m;while((m=p.exec(t))!==null){const n=parseInt(m[1].replace(/,/g,""));if(n>=100&&n<=1000000)amounts.push(n)}
+  });
+  const amount=amounts.length?Math.max(...amounts):"";
+  const lines=t.split(/\r?\n/).map(l=>l.trim()).filter(l=>l.length>1);
+  let shop="";
+  for(const l of lines.slice(0,6)){
+    if(l.length<2||l.length>20)continue;
+    if(/[0-9]{6,}/.test(l)||/TEL|FAX|〒|http|レシート/.test(l))continue;
+    if(/[ぁ-んァ-ヶ一-龯a-zA-Z]/.test(l)){shop=l;break}
+  }
+  let date=new Date().toISOString().split("T")[0];
+  const dm=t.match(/(\d{4})[年\/\-](\d{1,2})[月\/\-](\d{1,2})/)||t.match(/(\d{2})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
+  if(dm){let y=dm[1],mo=dm[2].padStart(2,"0"),d=dm[3].padStart(2,"0");if(y.length===2)y="20"+y;date=y+"-"+mo+"-"+d}
+  const items=[];
+  lines.forEach(line=>{
+    const m=line.match(/^(.+?)\s+¥?\s*([0-9,]+)$/);
+    if(m){const name=m[1].trim();const price=parseInt(m[2].replace(/,/g,""));
+      if(name.length>1&&name.length<20&&price>=10&&price<100000&&!/合計|小計|税|割引/.test(name))items.push({name,price})}
+  });
+  return{shop,amount,date,items};
+}
+// 購入品
+function addItemRow(name="",price="",cat=""){
+  const list=document.getElementById("items-list");
+  const row=document.createElement("div");row.className="item-row";
+  const catOpts=EXPENSE_CATS.map(c=>`<option value="${c.id}" ${cat===c.id?"selected":""}>${c.icon}${c.label}</option>`).join("");
+  row.innerHTML=`
+    <input type="text" class="item-name" placeholder="商品名" value="${name.replace(/"/g,'&quot;')}">
+    <input type="number" inputmode="decimal" class="item-price" placeholder="金額" value="${price}">
+    <select class="item-cat" style="border:1px solid #ccc;border-radius:6px;padding:4px;font-size:11px;background:#fff;max-width:90px">
+      <option value="">分類--</option>${catOpts}
+    </select>
+    <button class="item-del" onclick="this.parentNode.remove()">✕</button>`;
+  list.appendChild(row);
+}
+function getItems(){
+  return Array.from(document.querySelectorAll("#items-list .item-row")).map(row=>{
+    const name=row.querySelector(".item-name").value.trim();
+    const price=parseFloat(row.querySelector(".item-price").value)||0;
+    const cat=row.querySelector(".item-cat")?.value||"";
+    return{name,price,cat};
+  }).filter(i=>i.name||i.price);
+}
+// ===== トリミング =====
 let _cropEventsAdded=false;
 function initCropEvents(){
   if(_cropEventsAdded)return;
@@ -690,7 +826,7 @@ function initCropEvents(){
   window.addEventListener("mousemove",cropMove);
   window.addEventListener("mouseup",cropEnd);
 }
-function startCrop(dataUrl){
+function startCrop(dataUrl,autoBox){
   const cropArea=document.getElementById("crop-area");
   const canvas=document.getElementById("crop-canvas-el");
   cropArea.style.display="block";
@@ -701,8 +837,17 @@ function startCrop(dataUrl){
     canvas.style.width=maxW+"px";
     canvas.style.height=Math.round(img.height*(maxW/img.width))+"px";
     const ctx=canvas.getContext("2d");ctx.drawImage(img,0,0);
-    cropState={img,x:img.width*0.05,y:img.height*0.05,w:img.width*0.9,h:img.height*0.9,
-               drag:false,mode:null,dp:null,ox:0,oy:0,ow:0,oh:0};
+    // 自動検出範囲があればそれを使う
+    let x,y,w,h;
+    if(autoBox){
+      x=Math.max(0,Math.min(autoBox.x,img.width-50));
+      y=Math.max(0,Math.min(autoBox.y,img.height-50));
+      w=Math.min(autoBox.w,img.width-x);
+      h=Math.min(autoBox.h,img.height-y);
+    }else{
+      x=img.width*0.05;y=img.height*0.05;w=img.width*0.9;h=img.height*0.9;
+    }
+    cropState={img,x,y,w,h,drag:false,mode:null,dp:null,ox:0,oy:0,ow:0,oh:0};
     drawCrop();
     initCropEvents();
   };img.src=dataUrl;
@@ -769,14 +914,12 @@ function drawCrop(){
   ctx.clearRect(cs.x,cs.y,cs.w,cs.h);
   ctx.drawImage(cs.img,cs.x,cs.y,cs.w,cs.h,cs.x,cs.y,cs.w,cs.h);
   ctx.strokeStyle="#fff";ctx.lineWidth=2.5;ctx.strokeRect(cs.x,cs.y,cs.w,cs.h);
-  // グリッド線
   ctx.strokeStyle="rgba(255,255,255,0.35)";ctx.lineWidth=1;ctx.beginPath();
   ctx.moveTo(cs.x+cs.w/3,cs.y);ctx.lineTo(cs.x+cs.w/3,cs.y+cs.h);
   ctx.moveTo(cs.x+cs.w*2/3,cs.y);ctx.lineTo(cs.x+cs.w*2/3,cs.y+cs.h);
   ctx.moveTo(cs.x,cs.y+cs.h/3);ctx.lineTo(cs.x+cs.w,cs.y+cs.h/3);
   ctx.moveTo(cs.x,cs.y+cs.h*2/3);ctx.lineTo(cs.x+cs.w,cs.y+cs.h*2/3);
   ctx.stroke();
-  // ハンドル（大きめ・スマホ対応）
   [{x:cs.x,y:cs.y},{x:cs.x+cs.w,y:cs.y},{x:cs.x,y:cs.y+cs.h},{x:cs.x+cs.w,y:cs.y+cs.h}].forEach(h=>{
     ctx.fillStyle="#fff";ctx.beginPath();ctx.arc(h.x,h.y,13,0,Math.PI*2);ctx.fill();
     ctx.fillStyle="#e74c3c";ctx.beginPath();ctx.arc(h.x,h.y,7,0,Math.PI*2);ctx.fill();
@@ -792,93 +935,6 @@ function applyCrop(){
   document.getElementById("crop-area").style.display="none";cropState=null;
 }
 function cancelCrop(){document.getElementById("crop-area").style.display="none";cropState=null;}
-// OCR
-async function runOCRFromImg(){
-  const dataUrl=imgCropped||imgDataUrl;if(!dataUrl||!apiKey)return;
-  const st=document.getElementById("ocr-status");
-  if(st){st.textContent="⏳ OCR解析中...";st.style.color="#f39c12";}
-  try{
-    const base64=dataUrl.split(",")[1];
-    const res=await fetch("https://vision.googleapis.com/v1/images:annotate?key="+apiKey,{
-      method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({requests:[{image:{content:base64},features:[{type:"DOCUMENT_TEXT_DETECTION"}],imageContext:{languageHints:["ja"]}}]})
-    });
-    const d=await res.json();
-    const text=d.responses?.[0]?.fullTextAnnotation?.text||"";
-    const parsed=parseReceipt(text);
-    if(parsed.shop&&!document.getElementById("add-shop").value)document.getElementById("add-shop").value=parsed.shop;
-    if(parsed.amount&&!document.getElementById("add-amount").value)document.getElementById("add-amount").value=parsed.amount;
-    if(parsed.date)document.getElementById("add-date").value=parsed.date;
-    parsed.items.forEach(i=>addItemRow(i.name,i.price));
-    if(parsed.shop){
-      // 店名を正規化＋類似検出
-      const norm=normalizeShopName(parsed.shop);
-      const similar=findSimilarShop(norm);
-      const shopVal=document.getElementById("add-shop").value;
-      if(!shopVal){
-        document.getElementById("add-shop").value=similar||norm;
-        if(similar&&similar!==norm){
-          const sug=document.getElementById("shop-suggest");
-          if(sug)sug.innerHTML=`<div style="background:#edfaf3;border:1px solid #27ae60;border-radius:6px;padding:6px 10px;font-size:11px;margin-top:4px">✅ 既存「${similar}」に統一しました（元：${parsed.shop}）</div>`;
-        }
-      }
-      selectedCat=detectCat(currentType,parsed.shop);
-      renderCatGrid("add-cat-grid",currentType);
-    }
-    if(st){st.textContent="✅ OCR完了";st.style.color="#27ae60";setTimeout(()=>{if(st.textContent==="✅ OCR完了")st.textContent=""},3000);}
-  }catch(e){
-    if(st){st.textContent="❌ "+e.message;st.style.color="#cc4444";}
-  }
-}
-function parseReceipt(text){
-  const N=s=>s.replace(/[０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0)).replace(/[¥￥]/g,"¥");
-  const t=N(text);
-  let amounts=[];
-  [/合計[\s:：]*¥?\s*([0-9,]+)/g,/お?会計[\s:：]*¥?\s*([0-9,]+)/g,/¥\s*([0-9,]{3,})/g,/([0-9,]{3,})\s*円/g].forEach(p=>{
-    let m;while((m=p.exec(t))!==null){const n=parseInt(m[1].replace(/,/g,""));if(n>=100&&n<=1000000)amounts.push(n)}
-  });
-  const amount=amounts.length?Math.max(...amounts):"";
-  const lines=t.split(/\r?\n/).map(l=>l.trim()).filter(l=>l.length>1);
-  let shop="";
-  for(const l of lines.slice(0,6)){
-    if(l.length<2||l.length>20)continue;
-    if(/[0-9]{6,}/.test(l)||/TEL|FAX|〒|http|レシート/.test(l))continue;
-    if(/[ぁ-んァ-ヶ一-龯a-zA-Z]/.test(l)){shop=l;break}
-  }
-  let date=new Date().toISOString().split("T")[0];
-  const dm=t.match(/(\d{4})[年\/\-](\d{1,2})[月\/\-](\d{1,2})/)||t.match(/(\d{2})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
-  if(dm){let y=dm[1],mo=dm[2].padStart(2,"0"),d=dm[3].padStart(2,"0");if(y.length===2)y="20"+y;date=y+"-"+mo+"-"+d}
-  const items=[];
-  lines.forEach(line=>{
-    const m=line.match(/^(.+?)\s+¥?\s*([0-9,]+)$/);
-    if(m){const name=m[1].trim();const price=parseInt(m[2].replace(/,/g,""));
-      if(name.length>1&&name.length<20&&price>=10&&price<100000&&!/合計|小計|税|割引/.test(name))items.push({name,price})}
-  });
-  return{shop,amount,date,items};
-}
-// 購入品
-function addItemRow(name="",price="",cat=""){
-  const list=document.getElementById("items-list");
-  const row=document.createElement("div");row.className="item-row";
-  // カテゴリselectのoption生成
-  const catOpts=EXPENSE_CATS.map(c=>`<option value="${c.id}" ${cat===c.id?"selected":""}>${c.icon}${c.label}</option>`).join("");
-  row.innerHTML=`
-    <input type="text" class="item-name" placeholder="商品名" value="${name.replace(/"/g,'&quot;')}">
-    <input type="number" inputmode="decimal" class="item-price" placeholder="金額" value="${price}">
-    <select class="item-cat" style="border:1px solid #ccc;border-radius:6px;padding:4px;font-size:11px;background:#fff;max-width:90px">
-      <option value="">分類--</option>${catOpts}
-    </select>
-    <button class="item-del" onclick="this.parentNode.remove()">✕</button>`;
-  list.appendChild(row);
-}
-function getItems(){
-  return Array.from(document.querySelectorAll("#items-list .item-row")).map(row=>{
-    const name=row.querySelector(".item-name").value.trim();
-    const price=parseFloat(row.querySelector(".item-price").value)||0;
-    const cat=row.querySelector(".item-cat")?.value||"";
-    return{name,price,cat};
-  }).filter(i=>i.name||i.price);
-}
 // フォーム操作
 function setType(type){
   currentType=type;
@@ -926,12 +982,12 @@ function addRecord(){
   if(currentRepeat!=="none"&&!repeats.find(r=>r.sourceId===rec.id)){
     repeats.push({id:rec.id+"_r",sourceId:rec.id,type:currentType,name:shop,amount,cat:selectedCat,freq:currentRepeat,nextDate:calcNext(date,currentRepeat)});
   }
-  saveLocal();if(accessToken)syncDrive();closeAddModal();renderAll();
+  if(accessToken)syncDrive();closeAddModal();renderAll();
 }
 function deleteCurrentRecord(){
   if(!confirm("削除しますか？"))return;
   records=records.filter(r=>r.id!==detailId);
-  saveLocal();if(accessToken)syncDrive();closeDetailModal();renderAll();
+  if(accessToken)syncDrive();closeDetailModal();renderAll();
 }
 function openDetail(id){
   const r=records.find(rec=>rec.id===id);if(!r)return;
@@ -956,7 +1012,6 @@ function openDetail(id){
     body+="</div>";
   }
   document.getElementById("detail-body").innerHTML=body;
-  // 編集ボタンを表示
   const editBtn=document.getElementById("detail-edit-btn");
   if(editBtn)editBtn.style.display="block";
   document.getElementById("detail-modal").style.display="flex";
@@ -964,7 +1019,6 @@ function openDetail(id){
 function editCurrentRecord(){
   const r=records.find(rec=>rec.id===detailId);if(!r)return;
   closeDetailModal();
-  // モーダルを開いて既存値をセット
   editingId=r.id;
   currentType=r.type;
   selectedCat=r.cat;
@@ -982,7 +1036,6 @@ function editCurrentRecord(){
     document.getElementById("add-img-preview").style.display="block";
     document.getElementById("clear-img-btn").style.display="block";
   }
-  // 繰り返しチップ反映
   const map={none:0,daily:1,weekly:2,monthly:3};
   document.querySelectorAll("#repeat-opts .repeat-chip").forEach((b,i)=>{
     b.className="repeat-chip"+(i===(map[currentRepeat]||0)?" active":"");
@@ -1019,12 +1072,12 @@ function addRepeat(){
   if(!name){alert("名前を入力してください");return}
   if(!amount||amount<=0){alert("金額を入力してください");return}
   repeats.push({id:Date.now().toString(36),type:repeatType,name,amount,cat:repeatCat,freq:repeatFreq,nextDate:start});
-  saveLocal();if(accessToken)syncDrive();closeRepeatModal();renderRepeatArea();
+  if(accessToken)syncDrive();closeRepeatModal();renderRepeatArea();
 }
 function deleteRepeat(id){
   if(!confirm("削除しますか？"))return;
   repeats=repeats.filter(r=>r.id!==id);
-  saveLocal();if(accessToken)syncDrive();renderRepeatArea();
+  if(accessToken)syncDrive();renderRepeatArea();
 }
 // 検索
 function doSearch(){
@@ -1059,7 +1112,6 @@ function exportCSV(){
   a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv;charset=utf-8;"}));
   a.download="家計簿_"+currentYM.y+String(currentYM.m).padStart(2,"0")+".csv";a.click();
 }
-// 描画
 function switchTab(tab){
   ["home","graph","search","repeat","settings"].forEach(t=>{
     document.getElementById("screen-"+t).style.display=t===tab?"block":"none";
@@ -1183,8 +1235,6 @@ function renderGraph(){
   const maxM=Math.max(...months.map(m=>Math.max(m.inc,m.exp)),1);
   const avg6Exp=months.reduce((s,m)=>s+m.exp,0)/6;
   const expDiff=avg6Exp>0?Math.round((exp-avg6Exp)/avg6Exp*100):0;
-
-  // 収支チェッカー
   let checkerHtml=`<div class="graph-card">
     <div class="graph-title">💡 収支チェッカー</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
@@ -1203,8 +1253,6 @@ function renderGraph(){
       ${savingRate>=30?'<br>🌟 貯蓄率30%超は優秀です！':savingRate>=20?'<br>👍 貯蓄率20%超は良いペースです。':savingRate>=0?'<br>💪 貯蓄率20%を目指しましょう。':''}
     </div>
   </div>`;
-
-  // 予算進捗
   let budgetHtml="";
   const budgetCats=EXPENSE_CATS.filter(c=>budgets[c.id]>0);
   if(budgetCats.length){
@@ -1227,7 +1275,6 @@ function renderGraph(){
       }).join("")}
     </div>`;
   }
-
   el.innerHTML=`
     <div class="graph-card">
       <div class="graph-title">💰 今月の収支</div>
