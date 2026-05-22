@@ -221,6 +221,12 @@ canvas#cc{display:none}
       <button class="modal-btn cancel" id="sync-btn2" style="padding:8px;font-size:12px;display:none" onclick="syncDrive()">☁️ 今すぐ同期</button>
     </div>
     <div class="settings-card">
+      <div class="settings-title">💰 月間予算設定</div>
+      <div style="font-size:10px;color:#999;margin-bottom:8px">カテゴリ別の予算を設定すると、グラフタブで進捗が見えます。</div>
+      <div id="budget-list"></div>
+      <button class="modal-btn cancel" style="padding:8px;font-size:12px;margin-top:8px" onclick="saveBudgets()">💾 予算を保存</button>
+    </div>
+    <div class="settings-card">
       <div class="settings-title">📊 データ管理</div>
       <button class="modal-btn cancel" style="padding:8px;font-size:12px" onclick="exportCSV()">📥 CSVエクスポート</button>
     </div>
@@ -272,8 +278,8 @@ canvas#cc{display:none}
       <div class="img-btns">
         <button class="img-btn" onclick="pickImg(true)">📷 カメラ</button>
         <button class="img-btn" onclick="pickImg(false)">🖼️ ライブラリ</button>
-        <button class="img-btn" id="ocr-btn" onclick="runOCRFromImg()" style="display:none">🚀 OCR</button>
         <button class="img-btn" id="clear-img-btn" onclick="clearImg()" style="display:none;background:#ffe0e0;color:#cc4444">✕ 削除</button>
+        <div id="ocr-status" style="flex:1;font-size:10px;color:#666;text-align:center;line-height:30px"></div>
       </div>
     </div>
     <label class="form-label">🔁 繰り返し設定（任意）</label>
@@ -293,6 +299,7 @@ canvas#cc{display:none}
     <div class="modal-handle"></div>
     <div class="modal-title" id="detail-title"></div>
     <div id="detail-body"></div>
+    <button class="modal-btn primary" id="detail-edit-btn" onclick="editCurrentRecord()">✏️ 編集</button>
     <button class="modal-btn cancel" style="background:#ffe0e0;color:#cc4444" onclick="deleteCurrentRecord()">🗑 削除</button>
     <button class="modal-btn cancel" onclick="closeDetailModal()">閉じる</button>
   </div>
@@ -359,6 +366,29 @@ let repeatType="expense",repeatCat="other",repeatFreq="monthly";
 let currentRepeat="none";
 let imgDataUrl=null,imgCropped=null,cropState=null;
 let googleUser=null,accessToken=null,driveFileId=null,tokenTimer=null;
+let budgets={}; // {catId: 金額}
+
+// ===== 予算管理 =====
+function renderBudgetList(){
+  const el=document.getElementById("budget-list");if(!el)return;
+  el.innerHTML=EXPENSE_CATS.map(c=>{
+    const val=budgets[c.id]||"";
+    return`<div style="display:flex;align-items:center;gap:8px;padding:5px 0">
+      <span style="font-size:14px;width:24px;text-align:center">${c.icon}</span>
+      <span style="flex:1;font-size:12px;font-weight:700">${c.label}</span>
+      <input type="number" inputmode="decimal" id="bg_${c.id}" value="${val}" placeholder="未設定" style="width:90px;border:1px solid #ccc;border-radius:6px;padding:5px 7px;font-size:12px;text-align:right">
+      <span style="font-size:11px;color:#999">円</span>
+    </div>`;
+  }).join("");
+}
+function saveBudgets(){
+  EXPENSE_CATS.forEach(c=>{
+    const v=parseFloat(document.getElementById(`bg_${c.id}`).value);
+    if(v>0)budgets[c.id]=v;else delete budgets[c.id];
+  });
+  saveLocal();if(accessToken)syncDrive();
+  showSyncMsg("✅ 予算保存");
+}
 
 function init(){
   const now=new Date();
@@ -407,24 +437,22 @@ async function testApiKey(){
 function initGoogleAuth(){
   window.onGoogleLibraryLoad=()=>{
     try{
-      // ID Token方式で自動ログイン
       google.accounts.id.initialize({
         client_id:CLIENT_ID,
         callback:handleGoogleCallback,
-        auto_select:true, // 自動選択
-        cancel_on_tap_outside:false
+        auto_select:true,
+        cancel_on_tap_outside:false,
+        use_fedcm_for_prompt:false
       });
       const saved=localStorage.getItem("google_user");
       if(saved){
         googleUser=JSON.parse(saved);
         renderLoginArea();
-        // トークン自動取得（アカウント選択画面を出さない）
+        // 即座にサイレントでトークン取得
         silentTokenRefresh();
-      } else {
-        // 未ログイン時はOne Tapを表示
-        google.accounts.id.prompt();
       }
-    }catch(e){}
+      // 未ログイン時もOne Tapを表示しない（手動ログインに任せる）
+    }catch(e){console.log("Auth init error:",e);}
   };
 }
 function silentTokenRefresh(){
@@ -524,6 +552,7 @@ async function loadFromDrive(){
         saveLocal();renderAll();
       }
       if(json.repeats)repeats=json.repeats;
+      if(json.budgets)budgets=json.budgets;
       showSyncMsg("✅ 同期完了");
     }
   }catch(e){showSyncMsg("⚠️ 読込エラー")}
@@ -531,7 +560,7 @@ async function loadFromDrive(){
 async function syncDrive(){
   if(!accessToken){refreshToken();setTimeout(syncDrive,2000);return}
   try{
-    const body=JSON.stringify({records,repeats});
+    const body=JSON.stringify({records,repeats,budgets});
     if(driveFileId){
       await fetch("https://www.googleapis.com/upload/drive/v3/files/"+driveFileId+"?uploadType=media",{method:"PATCH",headers:{Authorization:"Bearer "+accessToken,"Content-Type":"application/json"},body});
     }else{
@@ -637,15 +666,16 @@ document.getElementById("file-img").addEventListener("change",async e=>{
   document.getElementById("add-img-preview").src=imgDataUrl;
   document.getElementById("add-img-preview").style.display="block";
   document.getElementById("clear-img-btn").style.display="block";
-  if(apiKey)document.getElementById("ocr-btn").style.display="block";
   startCrop(imgDataUrl);
+  // OCR自動実行
+  if(apiKey)runOCRFromImg();
 });
 function clearImg(){
   imgDataUrl=null;imgCropped=null;cropState=null;
   document.getElementById("add-img-preview").style.display="none";
   document.getElementById("crop-area").style.display="none";
-  document.getElementById("ocr-btn").style.display="none";
   document.getElementById("clear-img-btn").style.display="none";
+  const st=document.getElementById("ocr-status");if(st)st.textContent="";
 }
 // トリミング用イベントを一度だけ登録
 let _cropEventsAdded=false;
@@ -666,7 +696,7 @@ function startCrop(dataUrl){
   cropArea.style.display="block";
   const img=new Image();
   img.onload=()=>{
-    const maxW=Math.min(window.innerWidth-28,600);
+    const maxW=Math.min(window.innerWidth-40,360);
     canvas.width=img.width;canvas.height=img.height;
     canvas.style.width=maxW+"px";
     canvas.style.height=Math.round(img.height*(maxW/img.width))+"px";
@@ -765,7 +795,8 @@ function cancelCrop(){document.getElementById("crop-area").style.display="none";
 // OCR
 async function runOCRFromImg(){
   const dataUrl=imgCropped||imgDataUrl;if(!dataUrl||!apiKey)return;
-  const btn=document.getElementById("ocr-btn");btn.textContent="⏳";btn.disabled=true;
+  const st=document.getElementById("ocr-status");
+  if(st){st.textContent="⏳ OCR解析中...";st.style.color="#f39c12";}
   try{
     const base64=dataUrl.split(",")[1];
     const res=await fetch("https://vision.googleapis.com/v1/images:annotate?key="+apiKey,{
@@ -779,9 +810,25 @@ async function runOCRFromImg(){
     if(parsed.amount&&!document.getElementById("add-amount").value)document.getElementById("add-amount").value=parsed.amount;
     if(parsed.date)document.getElementById("add-date").value=parsed.date;
     parsed.items.forEach(i=>addItemRow(i.name,i.price));
-    if(parsed.shop){selectedCat=detectCat(currentType,parsed.shop);renderCatGrid("add-cat-grid",currentType)}
-  }catch(e){alert("OCRエラー: "+e.message)}
-  btn.textContent="🚀 OCR";btn.disabled=false;
+    if(parsed.shop){
+      // 店名を正規化＋類似検出
+      const norm=normalizeShopName(parsed.shop);
+      const similar=findSimilarShop(norm);
+      const shopVal=document.getElementById("add-shop").value;
+      if(!shopVal){
+        document.getElementById("add-shop").value=similar||norm;
+        if(similar&&similar!==norm){
+          const sug=document.getElementById("shop-suggest");
+          if(sug)sug.innerHTML=`<div style="background:#edfaf3;border:1px solid #27ae60;border-radius:6px;padding:6px 10px;font-size:11px;margin-top:4px">✅ 既存「${similar}」に統一しました（元：${parsed.shop}）</div>`;
+        }
+      }
+      selectedCat=detectCat(currentType,parsed.shop);
+      renderCatGrid("add-cat-grid",currentType);
+    }
+    if(st){st.textContent="✅ OCR完了";st.style.color="#27ae60";setTimeout(()=>{if(st.textContent==="✅ OCR完了")st.textContent=""},3000);}
+  }catch(e){
+    if(st){st.textContent="❌ "+e.message;st.style.color="#cc4444";}
+  }
 }
 function parseReceipt(text){
   const N=s=>s.replace(/[０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0)).replace(/[¥￥]/g,"¥");
@@ -810,15 +857,26 @@ function parseReceipt(text){
   return{shop,amount,date,items};
 }
 // 購入品
-function addItemRow(name="",price=""){
+function addItemRow(name="",price="",cat=""){
   const list=document.getElementById("items-list");
   const row=document.createElement("div");row.className="item-row";
-  row.innerHTML='<input type="text" class="item-name" placeholder="商品名" value="'+name+'"><input type="number" inputmode="decimal" class="item-price" placeholder="金額" value="'+price+'"><button class="item-del" onclick="this.parentNode.remove()">✕</button>';
+  // カテゴリselectのoption生成
+  const catOpts=EXPENSE_CATS.map(c=>`<option value="${c.id}" ${cat===c.id?"selected":""}>${c.icon}${c.label}</option>`).join("");
+  row.innerHTML=`
+    <input type="text" class="item-name" placeholder="商品名" value="${name.replace(/"/g,'&quot;')}">
+    <input type="number" inputmode="decimal" class="item-price" placeholder="金額" value="${price}">
+    <select class="item-cat" style="border:1px solid #ccc;border-radius:6px;padding:4px;font-size:11px;background:#fff;max-width:90px">
+      <option value="">分類--</option>${catOpts}
+    </select>
+    <button class="item-del" onclick="this.parentNode.remove()">✕</button>`;
   list.appendChild(row);
 }
 function getItems(){
   return Array.from(document.querySelectorAll("#items-list .item-row")).map(row=>{
-    const ins=row.querySelectorAll("input");return{name:ins[0].value.trim(),price:parseFloat(ins[1].value)||0};
+    const name=row.querySelector(".item-name").value.trim();
+    const price=parseFloat(row.querySelector(".item-price").value)||0;
+    const cat=row.querySelector(".item-cat")?.value||"";
+    return{name,price,cat};
   }).filter(i=>i.name||i.price);
 }
 // フォーム操作
@@ -839,10 +897,12 @@ function setRepeat(r,btn){
 function openAddModal(){
   currentType="expense";editingId=null;imgDataUrl=null;imgCropped=null;currentRepeat="none";
   setType("expense");
+  document.getElementById("add-modal-title").textContent="支出を記録";
   document.getElementById("add-amount").value="";
   document.getElementById("add-shop").value="";
   document.getElementById("add-date").value=selectedDate||new Date().toISOString().split("T")[0];
   document.getElementById("items-list").innerHTML="";
+  const sug=document.getElementById("shop-suggest");if(sug)sug.innerHTML="";
   clearImg();selectedCat="other";
   document.querySelectorAll("#repeat-opts .repeat-chip").forEach((b,i)=>b.className="repeat-chip"+(i===0?" active":""));
   renderCatGrid("add-cat-grid","expense");
@@ -888,11 +948,48 @@ function openDetail(id){
   </div>`;
   if(r.items?.length){
     body+='<div class="detail-items"><div style="font-size:11px;font-weight:800;color:#666;margin-bottom:5px">📋 購入品</div>';
-    r.items.forEach(i=>{body+=`<div class="detail-item-row"><span>${i.name}</span><span style="font-weight:700">${i.price?i.price.toLocaleString()+"円":""}</span></div>`});
+    r.items.forEach(i=>{
+      const itemCat=i.cat?getCat("expense",i.cat):null;
+      const catTag=itemCat?`<span style="font-size:9px;background:${itemCat.color}22;color:${itemCat.color};padding:1px 5px;border-radius:4px;margin-right:4px">${itemCat.icon}${itemCat.label}</span>`:"";
+      body+=`<div class="detail-item-row"><span>${catTag}${i.name}</span><span style="font-weight:700">${i.price?i.price.toLocaleString()+"円":""}</span></div>`;
+    });
     body+="</div>";
   }
   document.getElementById("detail-body").innerHTML=body;
+  // 編集ボタンを表示
+  const editBtn=document.getElementById("detail-edit-btn");
+  if(editBtn)editBtn.style.display="block";
   document.getElementById("detail-modal").style.display="flex";
+}
+function editCurrentRecord(){
+  const r=records.find(rec=>rec.id===detailId);if(!r)return;
+  closeDetailModal();
+  // モーダルを開いて既存値をセット
+  editingId=r.id;
+  currentType=r.type;
+  selectedCat=r.cat;
+  currentRepeat=r.repeat||"none";
+  imgDataUrl=r.imgUrl;
+  imgCropped=null;
+  setType(r.type);
+  document.getElementById("add-amount").value=r.amount;
+  document.getElementById("add-shop").value=r.shop||"";
+  document.getElementById("add-date").value=r.date;
+  document.getElementById("items-list").innerHTML="";
+  (r.items||[]).forEach(i=>addItemRow(i.name,i.price,i.cat));
+  if(r.imgUrl){
+    document.getElementById("add-img-preview").src=r.imgUrl;
+    document.getElementById("add-img-preview").style.display="block";
+    document.getElementById("clear-img-btn").style.display="block";
+  }
+  // 繰り返しチップ反映
+  const map={none:0,daily:1,weekly:2,monthly:3};
+  document.querySelectorAll("#repeat-opts .repeat-chip").forEach((b,i)=>{
+    b.className="repeat-chip"+(i===(map[currentRepeat]||0)?" active":"");
+  });
+  renderCatGrid("add-cat-grid",r.type);
+  document.getElementById("add-modal-title").textContent="記録を編集";
+  document.getElementById("add-modal").style.display="flex";
 }
 function closeDetailModal(){document.getElementById("detail-modal").style.display="none";detailId=null}
 // 固定費
@@ -970,7 +1067,7 @@ function switchTab(tab){
   });
   if(tab==="graph")renderGraph();
   if(tab==="repeat")renderRepeatArea();
-  if(tab==="settings"){document.getElementById("api-key-input").value=apiKey;renderLoginArea();}
+  if(tab==="settings"){document.getElementById("api-key-input").value=apiKey;renderLoginArea();renderBudgetList();}
 }
 function changeMonth(delta){
   currentYM.m+=delta;
@@ -1068,16 +1165,116 @@ function renderGraph(){
   const mr=getMonthRecords();
   const inc=mr.filter(r=>r.type==="income").reduce((s,r)=>s+r.amount,0);
   const exp=mr.filter(r=>r.type==="expense").reduce((s,r)=>s+r.amount,0);
+  const balance=inc-exp;
+  const savingRate=inc>0?Math.round(balance/inc*100):0;
   const ec={};mr.filter(r=>r.type==="expense").forEach(r=>{ec[r.cat]=(ec[r.cat]||0)+r.amount});
-  const sorted=Object.entries(ec).sort((a,b)=>b[1]-a[1]);const maxV=sorted[0]?.[1]||1;
+  const sorted=Object.entries(ec).sort((a,b)=>b[1]-a[1]);
+  const maxV=sorted[0]?.[1]||1;
   const months=[];
   for(let i=5;i>=0;i--){
     let y=currentYM.y,m=currentYM.m-i;if(m<=0){m+=12;y--}
     const mrs=records.filter(r=>{if(!r.date)return false;const[ry,rm]=r.date.split("-").map(Number);return ry===y&&rm===m});
-    months.push({label:m+"月",inc:mrs.filter(r=>r.type==="income").reduce((s,r)=>s+r.amount,0),exp:mrs.filter(r=>r.type==="expense").reduce((s,r)=>s+r.amount,0)});
+    months.push({
+      label:m+"月",
+      inc:mrs.filter(r=>r.type==="income").reduce((s,r)=>s+r.amount,0),
+      exp:mrs.filter(r=>r.type==="expense").reduce((s,r)=>s+r.amount,0)
+    });
   }
   const maxM=Math.max(...months.map(m=>Math.max(m.inc,m.exp)),1);
-  el.innerHTML='<div class="graph-card"><div class="graph-title">💰 今月の収支</div><div style="display:flex;gap:10px;margin-bottom:10px"><div style="flex:1;background:#f0fff4;border-radius:8px;padding:10px;text-align:center"><div style="font-size:10px;color:#27ae60;font-weight:700">収入</div><div style="font-size:18px;font-weight:800;color:#27ae60">+'+inc.toLocaleString()+'</div></div><div style="flex:1;background:#fff0f0;border-radius:8px;padding:10px;text-align:center"><div style="font-size:10px;color:#e74c3c;font-weight:700">支出</div><div style="font-size:18px;font-weight:800;color:#e74c3c">-'+exp.toLocaleString()+'</div></div></div></div>'+'<div class="graph-card"><div class="graph-title">📊 支出カテゴリ別</div>'+(sorted.map(([catId,val])=>{const cat=getCat("expense",catId);return'<div class="bar-row"><div class="bar-label">'+cat.icon+" "+cat.label+'</div><div class="bar-wrap"><div class="bar-fill" style="width:'+Math.round(val/maxV*100)+'%;background:'+cat.color+'"></div></div><div class="bar-val">'+val.toLocaleString()+"円</div></div>"}).join("")||'<div class="empty-msg">データがありません</div>')+"</div>"+'<div class="graph-card"><div class="graph-title">📈 月別推移（過去6ヶ月）</div><div class="monthly-chart">'+months.map(m=>{const ih=m.inc?Math.max(Math.round(m.inc/maxM*76),3):2;const eh=m.exp?Math.max(Math.round(m.exp/maxM*76),3):2;return'<div class="monthly-col"><div class="monthly-bars"><div class="m-bar" style="height:'+ih+'px;background:#27ae60"></div><div class="m-bar" style="height:'+eh+'px;background:#e74c3c"></div></div><div class="monthly-bar-label">'+m.label+"</div></div>"}).join("")+"</div>"+'<div style="display:flex;gap:10px;justify-content:center;margin-top:6px"><div style="display:flex;align-items:center;gap:3px;font-size:10px;color:#666"><div style="width:10px;height:10px;border-radius:2px;background:#27ae60"></div>収入</div><div style="display:flex;align-items:center;gap:3px;font-size:10px;color:#666"><div style="width:10px;height:10px;border-radius:2px;background:#e74c3c"></div>支出</div></div></div>';
+  const avg6Exp=months.reduce((s,m)=>s+m.exp,0)/6;
+  const expDiff=avg6Exp>0?Math.round((exp-avg6Exp)/avg6Exp*100):0;
+
+  // 収支チェッカー
+  let checkerHtml=`<div class="graph-card">
+    <div class="graph-title">💡 収支チェッカー</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+      <div style="background:${balance>=0?"#f0fff4":"#fff0f0"};border-radius:8px;padding:10px;text-align:center">
+        <div style="font-size:10px;color:#666;font-weight:700">収支バランス</div>
+        <div style="font-size:20px;font-weight:800;color:${balance>=0?"#27ae60":"#e74c3c"}">${balance>=0?"+":""}${balance.toLocaleString()}円</div>
+      </div>
+      <div style="background:#f0f4ff;border-radius:8px;padding:10px;text-align:center">
+        <div style="font-size:10px;color:#666;font-weight:700">貯蓄率</div>
+        <div style="font-size:20px;font-weight:800;color:${savingRate>=20?"#27ae60":savingRate>=0?"#f39c12":"#e74c3c"}">${savingRate}%</div>
+      </div>
+    </div>
+    <div style="background:#f8f8f5;border-radius:8px;padding:8px 10px;font-size:11px;line-height:1.7">
+      ${balance>=0?'✅ <strong>黒字</strong>です。':'⚠️ <strong>赤字</strong>です。支出を見直しましょう。'}<br>
+      ${avg6Exp>0?(expDiff>10?`📈 支出は過去6ヶ月平均より<strong style="color:#e74c3c">${expDiff}%増</strong>えています。`:expDiff<-10?`📉 支出は過去6ヶ月平均より<strong style="color:#27ae60">${Math.abs(expDiff)}%減</strong>っています。`:`📊 支出は過去6ヶ月平均とほぼ同水準（${expDiff>=0?"+":""}${expDiff}%）です。`):""}
+      ${savingRate>=30?'<br>🌟 貯蓄率30%超は優秀です！':savingRate>=20?'<br>👍 貯蓄率20%超は良いペースです。':savingRate>=0?'<br>💪 貯蓄率20%を目指しましょう。':''}
+    </div>
+  </div>`;
+
+  // 予算進捗
+  let budgetHtml="";
+  const budgetCats=EXPENSE_CATS.filter(c=>budgets[c.id]>0);
+  if(budgetCats.length){
+    budgetHtml=`<div class="graph-card">
+      <div class="graph-title">🎯 予算進捗</div>
+      ${budgetCats.map(c=>{
+        const used=ec[c.id]||0;
+        const bg=budgets[c.id];
+        const pct=Math.round(used/bg*100);
+        const col=pct>=100?"#e74c3c":pct>=80?"#f39c12":"#27ae60";
+        return`<div style="margin-bottom:8px">
+          <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px">
+            <span style="font-weight:700">${c.icon} ${c.label}</span>
+            <span style="color:${col};font-weight:700">${used.toLocaleString()} / ${bg.toLocaleString()}円（${pct}%）</span>
+          </div>
+          <div style="background:#f0f0f0;border-radius:3px;height:6px;overflow:hidden">
+            <div style="height:100%;width:${Math.min(pct,100)}%;background:${col};transition:width 0.5s"></div>
+          </div>
+        </div>`;
+      }).join("")}
+    </div>`;
+  }
+
+  el.innerHTML=`
+    <div class="graph-card">
+      <div class="graph-title">💰 今月の収支</div>
+      <div style="display:flex;gap:10px;margin-bottom:10px">
+        <div style="flex:1;background:#f0fff4;border-radius:8px;padding:10px;text-align:center">
+          <div style="font-size:10px;color:#27ae60;font-weight:700">収入</div>
+          <div style="font-size:18px;font-weight:800;color:#27ae60">+${inc.toLocaleString()}</div>
+        </div>
+        <div style="flex:1;background:#fff0f0;border-radius:8px;padding:10px;text-align:center">
+          <div style="font-size:10px;color:#e74c3c;font-weight:700">支出</div>
+          <div style="font-size:18px;font-weight:800;color:#e74c3c">-${exp.toLocaleString()}</div>
+        </div>
+      </div>
+    </div>
+    ${checkerHtml}
+    ${budgetHtml}
+    <div class="graph-card">
+      <div class="graph-title">📊 支出カテゴリ別</div>
+      ${sorted.length?sorted.map(([catId,val])=>{
+        const cat=getCat("expense",catId);
+        return`<div class="bar-row">
+          <div class="bar-label">${cat.icon} ${cat.label}</div>
+          <div class="bar-wrap"><div class="bar-fill" style="width:${Math.round(val/maxV*100)}%;background:${cat.color}"></div></div>
+          <div class="bar-val">${val.toLocaleString()}円</div>
+        </div>`;
+      }).join(""):'<div class="empty-msg">データがありません</div>'}
+    </div>
+    <div class="graph-card">
+      <div class="graph-title">📈 月別推移（過去6ヶ月）</div>
+      <div class="monthly-chart">
+        ${months.map(m=>{
+          const ih=m.inc?Math.max(Math.round(m.inc/maxM*76),3):2;
+          const eh=m.exp?Math.max(Math.round(m.exp/maxM*76),3):2;
+          return`<div class="monthly-col">
+            <div class="monthly-bars">
+              <div class="m-bar" style="height:${ih}px;background:#27ae60"></div>
+              <div class="m-bar" style="height:${eh}px;background:#e74c3c"></div>
+            </div>
+            <div class="monthly-bar-label">${m.label}</div>
+          </div>`;
+        }).join("")}
+      </div>
+      <div style="display:flex;gap:10px;justify-content:center;margin-top:6px">
+        <div style="display:flex;align-items:center;gap:3px;font-size:10px;color:#666"><div style="width:10px;height:10px;border-radius:2px;background:#27ae60"></div>収入</div>
+        <div style="display:flex;align-items:center;gap:3px;font-size:10px;color:#666"><div style="width:10px;height:10px;border-radius:2px;background:#e74c3c"></div>支出</div>
+      </div>
+    </div>`;
 }
 init();
 </script>
