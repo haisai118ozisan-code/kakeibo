@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="家計簿">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#e74c3c">
+<link rel="manifest" href="./manifest.json">
+<link rel="apple-touch-icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxOTIgMTkyIj48cmVjdCB3aWR0aD0iMTkyIiBoZWlnaHQ9IjE5MiIgcng9IjQwIiBmaWxsPSIjZTc0YzNjIi8+PHRleHQgeD0iOTYiIHk9IjEzNSIgZm9udC1zaXplPSIxMTAiIHRleHQtYW5jaG9yPSJtaWRkbGUiPvCfk5I8L3RleHQ+PC9zdmc+">
 <title>📒 家計簿</title>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
@@ -221,6 +225,12 @@ canvas#cc{display:none}
       <button class="modal-btn cancel" id="sync-btn2" style="padding:8px;font-size:12px;display:none" onclick="syncDrive()">☁️ 今すぐ同期</button>
     </div>
     <div class="settings-card">
+      <div class="settings-title">🏷️ カスタムカテゴリ管理</div>
+      <div style="font-size:10px;color:#999;margin-bottom:8px">独自のカテゴリを追加できます</div>
+      <div id="custom-cat-list"></div>
+      <button class="modal-btn primary" style="padding:8px;font-size:12px;margin-top:8px" onclick="openAddCatModal()">＋ 新しいカテゴリを追加</button>
+    </div>
+    <div class="settings-card">
       <div class="settings-title">💰 月間予算設定</div>
       <div style="font-size:10px;color:#999;margin-bottom:8px">カテゴリ別の予算を設定すると、グラフタブで進捗が見えます。</div>
       <div id="budget-list"></div>
@@ -259,8 +269,9 @@ canvas#cc{display:none}
     <label class="form-label">カテゴリ</label>
     <div class="cat-grid" id="add-cat-grid"></div>
     <div class="items-section">
-      <div class="items-title">📋 購入品の記録（任意）</div>
+      <div class="items-title">📋 購入品の記録（金額自動連動）</div>
       <div id="items-list"></div>
+      <div id="items-total-warn" style="margin:4px 0"></div>
       <button class="add-item-btn" onclick="addItemRow()">＋ 購入品を追加</button>
     </div>
     <div class="img-section">
@@ -332,6 +343,27 @@ canvas#cc{display:none}
     <button class="modal-btn cancel" onclick="closeRepeatModal()">キャンセル</button>
   </div>
 </div>
+<!-- カテゴリ追加モーダル -->
+<div class="modal-overlay" id="add-cat-modal" style="display:none">
+  <div class="modal-sheet">
+    <div class="modal-handle"></div>
+    <div class="modal-title">🏷️ 新しいカテゴリを追加</div>
+    <label class="form-label">カテゴリ名</label>
+    <input type="text" class="form-input" id="new-cat-label" placeholder="例：ペット費">
+    <label class="form-label">アイコン（絵文字1文字）</label>
+    <input type="text" class="form-input" id="new-cat-icon" placeholder="例：🐕" maxlength="4">
+    <label class="form-label">グループ</label>
+    <select class="form-input" id="new-cat-group">
+      <option value="変動費">変動費</option>
+      <option value="固定費">固定費</option>
+      <option value="特別費">特別費</option>
+      <option value="悠太立替">悠太立替</option>
+      <option value="ふるさと納税">ふるさと納税</option>
+    </select>
+    <button class="modal-btn primary" onclick="submitNewCat()">✅ 追加</button>
+    <button class="modal-btn cancel" onclick="closeAddCatModal()">キャンセル</button>
+  </div>
+</div>
 <button class="fab" onclick="openAddModal()">＋</button>
 <input type="file" id="file-img" accept="image/*">
 <canvas id="cc"></canvas>
@@ -339,19 +371,45 @@ canvas#cc{display:none}
 const SK="kakeibo_v2",RSK="kakeibo_repeat_v1",API_SK="vision_api_key_v1";
 const CLIENT_ID="910592498421-acp8l2g713im2b3b63nirag9i1p04jnn.apps.googleusercontent.com";
 const DRIVE_FILE="家計簿データv2.json",SCOPES="https://www.googleapis.com/auth/drive.file";
+// ===== カテゴリ定義（5グループ） =====
 const EXPENSE_CATS=[
-  {id:"food",label:"食費",icon:"🛒",color:"#e74c3c"},
-  {id:"eat_out",label:"外食",icon:"🍜",color:"#e67e22"},
-  {id:"daily",label:"日用品",icon:"🧴",color:"#f39c12"},
-  {id:"transport",label:"交通費",icon:"🚗",color:"#27ae60"},
-  {id:"clothing",label:"衣料品",icon:"👕",color:"#2980b9"},
-  {id:"medical",label:"医療費",icon:"💊",color:"#8e44ad"},
-  {id:"edu",label:"教育費",icon:"📚",color:"#16a085"},
-  {id:"entertain",label:"娯楽",icon:"🎮",color:"#d35400"},
-  {id:"utility",label:"光熱費",icon:"💡",color:"#7f8c8d"},
-  {id:"housing",label:"住居費",icon:"🏠",color:"#c0392b"},
-  {id:"beauty",label:"美容",icon:"💅",color:"#e91e63"},
-  {id:"other",label:"その他",icon:"📌",color:"#95a5a6"},
+  // 変動費
+  {id:"v_food",label:"食費",icon:"🛒",color:"#e74c3c",group:"変動費"},
+  {id:"v_eatout",label:"外食",icon:"🍜",color:"#e67e22",group:"変動費"},
+  {id:"v_entertain",label:"娯楽",icon:"🎮",color:"#d35400",group:"変動費"},
+  {id:"v_social",label:"交際費",icon:"🍻",color:"#9b59b6",group:"変動費"},
+  {id:"v_daily",label:"日用品",icon:"🧴",color:"#f39c12",group:"変動費"},
+  {id:"v_transport",label:"交通・ガソリン",icon:"⛽",color:"#27ae60",group:"変動費"},
+  {id:"v_kids",label:"子供費",icon:"🧒",color:"#2ecc71",group:"変動費"},
+  {id:"v_medical",label:"医療費",icon:"🏥",color:"#8e44ad",group:"変動費"},
+  {id:"v_drug",label:"薬代",icon:"💊",color:"#a569bd",group:"変動費"},
+  {id:"v_beauty",label:"美容",icon:"💅",color:"#e91e63",group:"変動費"},
+  {id:"v_edu",label:"教育費",icon:"📚",color:"#16a085",group:"変動費"},
+  {id:"v_appliance",label:"家電(5万未満)",icon:"📺",color:"#34495e",group:"変動費"},
+  {id:"v_other",label:"その他",icon:"📌",color:"#95a5a6",group:"変動費"},
+  // 固定費
+  {id:"f_housing",label:"住居費",icon:"🏠",color:"#c0392b",group:"固定費"},
+  {id:"f_utility",label:"水道光熱費",icon:"💡",color:"#7f8c8d",group:"固定費"},
+  {id:"f_comm",label:"通信費",icon:"📱",color:"#3498db",group:"固定費"},
+  {id:"f_insurance",label:"保険費",icon:"🛡️",color:"#2980b9",group:"固定費"},
+  {id:"f_eduFee",label:"教育・保育費",icon:"🏫",color:"#1abc9c",group:"固定費"},
+  {id:"f_allowance",label:"お小遣い",icon:"👛",color:"#f1c40f",group:"固定費"},
+  // 特別費
+  {id:"s_ceremony",label:"冠婚葬祭",icon:"💐",color:"#e84393",group:"特別費"},
+  {id:"s_tax",label:"税金",icon:"📜",color:"#6c5ce7",group:"特別費"},
+  {id:"s_bigItem",label:"大型家具家電(5万以上)",icon:"🛋️",color:"#2d3436",group:"特別費"},
+  // 悠太立替
+  {id:"y_food",label:"立替:食費",icon:"🛒",color:"#fd79a8",group:"悠太立替"},
+  {id:"y_daily",label:"立替:日用品",icon:"🧴",color:"#fdcb6e",group:"悠太立替"},
+  {id:"y_appliance",label:"立替:家具家電",icon:"📺",color:"#e17055",group:"悠太立替"},
+  {id:"y_beauty",label:"立替:美容",icon:"💅",color:"#ff7675",group:"悠太立替"},
+  {id:"y_clothes",label:"立替:服",icon:"👕",color:"#74b9ff",group:"悠太立替"},
+  {id:"y_medical",label:"立替:医療費",icon:"💊",color:"#a29bfe",group:"悠太立替"},
+  {id:"y_mari",label:"立替:真理購入品",icon:"💝",color:"#ff6b9d",group:"悠太立替"},
+  {id:"y_kids",label:"立替:子供購入品",icon:"🧒",color:"#55efc4",group:"悠太立替"},
+  {id:"y_other",label:"立替:その他",icon:"📌",color:"#b2bec3",group:"悠太立替"},
+  // ふるさと納税（収支外フラグ用）
+  {id:"furusato",label:"ふるさと納税",icon:"🎁",color:"#00b894",group:"ふるさと納税"},
 ];
 const INCOME_CATS=[
   {id:"salary",label:"給与",icon:"💼",color:"#27ae60"},
@@ -362,16 +420,79 @@ const INCOME_CATS=[
 ];
 let records=[],repeats=[],apiKey="";
 let currentYM=null,selectedDate=null,editingId=null,detailId=null;
-let currentType="expense",selectedCat="other";
-let repeatType="expense",repeatCat="other",repeatFreq="monthly";
+let currentType="expense",selectedCat="v_other";
+let repeatType="expense",repeatCat="v_other",repeatFreq="monthly";
 let currentRepeat="none";
 let imgDataUrl=null,imgCropped=null,cropState=null;
 let googleUser=null,accessToken=null,driveFileId=null,tokenTimer=null;
 let budgets={};
+let customCats=[]; // ユーザー追加カテゴリ
+
+// ===== カスタムカテゴリ管理 =====
+function getAllExpenseCats(){
+  // 標準＋カスタムを結合
+  return [...EXPENSE_CATS,...customCats];
+}
+function getCatsByGroup(){
+  const all=getAllExpenseCats();
+  const groups={};
+  all.forEach(c=>{
+    const g=c.group||"その他";
+    if(!groups[g])groups[g]=[];
+    groups[g].push(c);
+  });
+  return groups;
+}
+function addCustomCat(label,icon,color,group){
+  const id="c_"+Date.now().toString(36);
+  customCats.push({id,label,icon:icon||"📌",color:color||"#95a5a6",group:group||"変動費",custom:true});
+  if(accessToken)syncDrive();
+}
+function deleteCustomCat(id){
+  if(!confirm("削除しますか？"))return;
+  customCats=customCats.filter(c=>c.id!==id);
+  if(accessToken)syncDrive();
+  renderCustomCatList();
+}
+function renderCustomCatList(){
+  const el=document.getElementById("custom-cat-list");if(!el)return;
+  if(!customCats.length){el.innerHTML='<div style="font-size:11px;color:#999;text-align:center;padding:10px">カスタムカテゴリはまだありません</div>';return;}
+  el.innerHTML=customCats.map(c=>
+    `<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:#f8f8f5;border-radius:6px;margin-bottom:4px">
+      <span style="font-size:16px">${c.icon}</span>
+      <span style="flex:1;font-size:12px;font-weight:700">${c.label}</span>
+      <span style="font-size:9px;color:#999;background:#fff;padding:2px 6px;border-radius:8px">${c.group}</span>
+      <button onclick="deleteCustomCat('${c.id}')" style="background:none;border:none;color:#ccc;font-size:14px;cursor:pointer">✕</button>
+    </div>`
+  ).join("");
+}
+function openAddCatModal(){
+  document.getElementById("new-cat-label").value="";
+  document.getElementById("new-cat-icon").value="📌";
+  document.getElementById("add-cat-modal").style.display="flex";
+}
+function closeAddCatModal(){document.getElementById("add-cat-modal").style.display="none"}
+function submitNewCat(){
+  const label=document.getElementById("new-cat-label").value.trim();
+  const icon=document.getElementById("new-cat-icon").value.trim()||"📌";
+  const group=document.getElementById("new-cat-group").value;
+  if(!label){alert("カテゴリ名を入力してください");return}
+  const colors=["#e74c3c","#e67e22","#f39c12","#27ae60","#2980b9","#8e44ad","#16a085","#d35400","#7f8c8d","#c0392b","#e91e63"];
+  const color=colors[customCats.length%colors.length];
+  addCustomCat(label,icon,color,group);
+  renderCustomCatList();
+  closeAddCatModal();
+}
+
+// ===== ふるさと納税 収支外判定 =====
+function isOutOfBalance(r){
+  // ふるさと納税で5万円以上は収支外
+  return r.cat==="furusato"&&r.amount>=50000;
+}
 
 function renderBudgetList(){
   const el=document.getElementById("budget-list");if(!el)return;
-  el.innerHTML=EXPENSE_CATS.map(c=>{
+  el.innerHTML=getAllExpenseCats().map(c=>{
     const val=budgets[c.id]||"";
     return`<div style="display:flex;align-items:center;gap:8px;padding:5px 0">
       <span style="font-size:14px;width:24px;text-align:center">${c.icon}</span>
@@ -382,8 +503,9 @@ function renderBudgetList(){
   }).join("");
 }
 function saveBudgets(){
-  EXPENSE_CATS.forEach(c=>{
-    const v=parseFloat(document.getElementById(`bg_${c.id}`).value);
+  getAllExpenseCats().forEach(c=>{
+    const el=document.getElementById(`bg_${c.id}`);if(!el)return;
+    const v=parseFloat(el.value);
     if(v>0)budgets[c.id]=v;else delete budgets[c.id];
   });
   if(accessToken)syncDrive();
@@ -554,6 +676,7 @@ async function loadFromDrive(){
       }
       if(json.repeats)repeats=json.repeats;
       if(json.budgets)budgets=json.budgets;
+      if(json.customCats)customCats=json.customCats;
       showSyncMsg("✅ 同期完了");
     }
   }catch(e){showSyncMsg("⚠️ 読込エラー")}
@@ -561,7 +684,7 @@ async function loadFromDrive(){
 async function syncDrive(){
   if(!accessToken){silentTokenRefresh();setTimeout(syncDrive,2000);return}
   try{
-    const body=JSON.stringify({records,repeats,budgets});
+    const body=JSON.stringify({records,repeats,budgets,customCats});
     if(driveFileId){
       await fetch("https://www.googleapis.com/upload/drive/v3/files/"+driveFileId+"?uploadType=media",{method:"PATCH",headers:{Authorization:"Bearer "+accessToken,"Content-Type":"application/json"},body});
     }else{
@@ -623,13 +746,39 @@ function useShopSuggest(el){
   document.getElementById("shop-suggest").innerHTML='';
 }
 // カテゴリ
-function getCats(type){return type==="income"?INCOME_CATS:EXPENSE_CATS}
+function getCats(type){return type==="income"?INCOME_CATS:getAllExpenseCats()}
 function getCat(type,id){return getCats(type).find(c=>c.id===id)||{label:"その他",icon:"📌",color:"#95a5a6"}}
 function detectCat(type,shop){
   const t=(shop||"").toLowerCase();
-  const m={food:["スーパー","イオン","コープ","業務","西友","食品","フジ"],eat_out:["マクドナルド","吉野家","すき家","レストラン","カフェ","弁当"],daily:["ドラッグ","ツルハ","マツキヨ","100均","ダイソー"],transport:["ガソリン","エネオス","駐車","電車","バス"],utility:["電気","ガス","水道"],housing:["家賃","管理費"],salary:["給与","給料"],bonus:["賞与","ボーナス"]};
+  const m={
+    v_food:["スーパー","イオン","コープ","業務","西友","食品","フジ","ゆめタウン","マックスバリュ"],
+    v_eatout:["マクドナルド","吉野家","すき家","レストラン","カフェ","弁当","スターバックス","ガスト","モス"],
+    v_daily:["ドラッグ","ツルハ","マツキヨ","100均","ダイソー","セリア","コスモス","ウエルシア"],
+    v_transport:["ガソリン","エネオス","コスモ","出光","シェル","駐車","電車","バス","タクシー"],
+    f_utility:["電気","ガス","水道","電力"],
+    f_housing:["家賃","管理費"],
+    f_comm:["docomo","au","softbank","楽天モバイル","ahamo","povo","通信"],
+    v_medical:["病院","クリニック","医院"],
+    v_drug:["薬局","調剤"],
+    salary:["給与","給料"],
+    bonus:["賞与","ボーナス"],
+  };
   for(const[id,kws]of Object.entries(m)){if(kws.some(k=>t.includes(k)))return id}
-  return type==="income"?"other_in":"other";
+  return type==="income"?"other_in":"v_other";
+}
+// ===== 購入品の自動カテゴライズ =====
+function detectItemCat(name){
+  const t=(name||"").toLowerCase();
+  const map={
+    v_food:["米","パン","肉","魚","野菜","果物","牛乳","卵","チーズ","ヨーグルト","豆腐","納豆","醤油","味噌","砂糖","塩","油","酒","ビール","ジュース","お茶","水","コーヒー","菓子","チョコ","アイス","弁当","おにぎり"],
+    v_daily:["ティッシュ","トイレットペーパー","洗剤","シャンプー","リンス","石鹸","歯磨き","歯ブラシ","タオル","電池","乾電池","ラップ","アルミ","ゴミ袋","柔軟剤"],
+    v_beauty:["化粧","コスメ","美容","リップ","ファンデ","マスカラ","シャンプー","トリートメント"],
+    v_drug:["薬","湿布","絆創膏","マスク","ビタミン","サプリ"],
+    v_kids:["おむつ","ミルク","おもちゃ","絵本","ベビー"],
+    v_appliance:["家電","電球","コード","ケーブル","充電器"],
+  };
+  for(const[id,kws]of Object.entries(map)){if(kws.some(k=>t.includes(k)))return id}
+  return "";
 }
 // 画像処理
 function compressImage(file){
@@ -795,15 +944,57 @@ function parseReceipt(text){
 function addItemRow(name="",price="",cat=""){
   const list=document.getElementById("items-list");
   const row=document.createElement("div");row.className="item-row";
-  const catOpts=EXPENSE_CATS.map(c=>`<option value="${c.id}" ${cat===c.id?"selected":""}>${c.icon}${c.label}</option>`).join("");
+  // 自動カテゴライズ（カテゴリ未指定時のみ）
+  if(!cat&&name)cat=detectItemCat(name);
+  const catOpts=getAllExpenseCats().map(c=>`<option value="${c.id}" ${cat===c.id?"selected":""}>${c.icon}${c.label}</option>`).join("");
   row.innerHTML=`
-    <input type="text" class="item-name" placeholder="商品名" value="${name.replace(/"/g,'&quot;')}">
-    <input type="number" inputmode="decimal" class="item-price" placeholder="金額" value="${price}">
-    <select class="item-cat" style="border:1px solid #ccc;border-radius:6px;padding:4px;font-size:11px;background:#fff;max-width:90px">
-      <option value="">分類--</option>${catOpts}
+    <input type="text" class="item-name" placeholder="商品名" value="${name.replace(/"/g,'&quot;')}" oninput="onItemChange(this)" style="font-size:11px;padding:4px 6px">
+    <input type="number" inputmode="decimal" class="item-price" placeholder="金額" value="${price}" oninput="onItemPriceChange()" style="font-size:11px;padding:4px 6px">
+    <select class="item-cat" style="border:1px solid #ccc;border-radius:6px;padding:3px;font-size:10px;background:#fff;max-width:75px">
+      <option value="">--</option>${catOpts}
     </select>
-    <button class="item-del" onclick="this.parentNode.remove()">✕</button>`;
+    <button class="item-del" onclick="removeItemRow(this)">✕</button>`;
   list.appendChild(row);
+  updateItemsTotal();
+}
+function removeItemRow(btn){
+  btn.parentNode.remove();
+  updateItemsTotal();
+}
+// 商品名入力時に自動カテゴライズ
+function onItemChange(input){
+  const name=input.value.trim();
+  if(!name)return;
+  const row=input.closest(".item-row");
+  const sel=row.querySelector(".item-cat");
+  if(sel&&!sel.value){
+    const cat=detectItemCat(name);
+    if(cat)sel.value=cat;
+  }
+}
+// 購入品の金額変更時に合計を自動反映
+function onItemPriceChange(){
+  updateItemsTotal();
+}
+// 購入品合計を計算し、記録金額欄に反映
+function updateItemsTotal(){
+  const items=getItems();
+  if(!items.length)return;
+  const total=items.reduce((s,i)=>s+i.price,0);
+  const amountInp=document.getElementById("add-amount");
+  // 購入品がある場合は合計値を自動セット（手動で書き換え可能）
+  if(total>0){
+    const currentVal=parseFloat(amountInp.value)||0;
+    // 購入品合計と記録金額が異なる場合のみ警告表示
+    const warn=document.getElementById("items-total-warn");
+    if(warn){
+      if(currentVal&&currentVal!==total){
+        warn.innerHTML=`<span style="color:#f39c12;font-size:10px;font-weight:700">⚠️ 購入品合計 ${total.toLocaleString()}円 ≠ 記録金額 ${currentVal.toLocaleString()}円 <button onclick="document.getElementById('add-amount').value=${total};document.getElementById('items-total-warn').innerHTML=''" style="background:#f39c12;color:#fff;border:none;border-radius:4px;padding:2px 6px;font-size:9px;cursor:pointer">→合計を反映</button></span>`;
+      }else{warn.innerHTML="";}
+    }
+    // 空欄なら自動入力
+    if(!currentVal)amountInp.value=total;
+  }
 }
 function getItems(){
   return Array.from(document.querySelectorAll("#items-list .item-row")).map(row=>{
@@ -942,7 +1133,7 @@ function setType(type){
   document.getElementById("type-income").className="type-btn"+(type==="income"?" active income":"");
   document.getElementById("add-amount").className="amount-inp"+(type==="income"?" income-mode":"");
   document.getElementById("add-submit-btn").className="modal-btn primary"+(type==="income"?" income-mode":"");
-  selectedCat=type==="income"?"other_in":"other";
+  selectedCat=type==="income"?"other_in":"v_other";
   renderCatGrid("add-cat-grid",type);
 }
 function setRepeat(r,btn){
@@ -959,7 +1150,7 @@ function openAddModal(){
   document.getElementById("add-date").value=selectedDate||new Date().toISOString().split("T")[0];
   document.getElementById("items-list").innerHTML="";
   const sug=document.getElementById("shop-suggest");if(sug)sug.innerHTML="";
-  clearImg();selectedCat="other";
+  clearImg();selectedCat="v_other";
   document.querySelectorAll("#repeat-opts .repeat-chip").forEach((b,i)=>b.className="repeat-chip"+(i===0?" active":""));
   renderCatGrid("add-cat-grid","expense");
   document.getElementById("add-modal").style.display="flex";
@@ -971,10 +1162,18 @@ function addRecord(){
   const date=document.getElementById("add-date").value;
   if(!amount||amount<=0){alert("金額を入力してください");return}
   if(!date){alert("日付を入力してください");return}
+  // 購入品合計チェック
+  const items=getItems();
+  if(items.length){
+    const itemsTotal=items.reduce((s,i)=>s+i.price,0);
+    if(itemsTotal>0&&itemsTotal!==amount){
+      if(!confirm(`⚠️ 購入品合計 ${itemsTotal.toLocaleString()}円 と記録金額 ${amount.toLocaleString()}円 が一致しません。\n\nこのまま記録しますか？`))return;
+    }
+  }
   const rec={
     id:editingId||(Date.now().toString(36)+Math.random().toString(36).slice(2,5)),
     type:currentType,shop,amount,date,cat:selectedCat,
-    items:getItems(),imgUrl:imgCropped||imgDataUrl||null,
+    items,imgUrl:imgCropped||imgDataUrl||null,
     repeat:currentRepeat!=="none"?currentRepeat:null
   };
   if(editingId)records=records.map(r=>r.id===editingId?rec:r);
@@ -1050,7 +1249,7 @@ function setRType(type){
   repeatType=type;
   document.getElementById("rtype-expense").className="type-btn"+(type==="expense"?" active expense":"");
   document.getElementById("rtype-income").className="type-btn"+(type==="income"?" active income":"");
-  repeatCat=type==="income"?"other_in":"other";renderCatGrid("repeat-cat-grid",type,true);
+  repeatCat=type==="income"?"other_in":"v_other";renderCatGrid("repeat-cat-grid",type,true);
 }
 function setRFreq(freq,btn){
   repeatFreq=freq;
@@ -1058,7 +1257,7 @@ function setRFreq(freq,btn){
   btn.className="repeat-chip active";
 }
 function openRepeatModal(){
-  repeatType="expense";repeatCat="other";repeatFreq="monthly";
+  repeatType="expense";repeatCat="v_other";repeatFreq="monthly";
   setRType("expense");
   document.getElementById("r-name").value="";document.getElementById("r-amount").value="";
   document.getElementById("r-startdate").value=new Date().toISOString().split("T")[0];
@@ -1119,7 +1318,7 @@ function switchTab(tab){
   });
   if(tab==="graph")renderGraph();
   if(tab==="repeat")renderRepeatArea();
-  if(tab==="settings"){document.getElementById("api-key-input").value=apiKey;renderLoginArea();renderBudgetList();}
+  if(tab==="settings"){document.getElementById("api-key-input").value=apiKey;renderLoginArea();renderBudgetList();renderCustomCatList();}
 }
 function changeMonth(delta){
   currentYM.m+=delta;
@@ -1138,8 +1337,12 @@ function renderAll(){
   renderSummary(mr);renderCalendar(mr);renderRecords(mr);
 }
 function renderSummary(mr){
-  const inc=mr.filter(r=>r.type==="income").reduce((s,r)=>s+(r.amount||0),0);
-  const exp=mr.filter(r=>r.type==="expense").reduce((s,r)=>s+(r.amount||0),0);
+  // 収支外（ふるさと納税5万以上）は除外
+  const normal=mr.filter(r=>!isOutOfBalance(r));
+  const outOf=mr.filter(r=>isOutOfBalance(r));
+  const inc=normal.filter(r=>r.type==="income").reduce((s,r)=>s+(r.amount||0),0);
+  const exp=normal.filter(r=>r.type==="expense").reduce((s,r)=>s+(r.amount||0),0);
+  const outOfTotal=outOf.reduce((s,r)=>s+(r.amount||0),0);
   const bal=inc-exp;const pct=inc?Math.min(100,Math.round(exp/inc*100)):0;
   document.getElementById("summary-card").innerHTML=`
     <div class="summary-row">
@@ -1150,7 +1353,10 @@ function renderSummary(mr){
       <div class="sum-item"><div class="sum-label">残高</div><div class="sum-val balance" style="${bal<0?"color:#ff6b6b":""}">${bal>=0?"+":""}${bal.toLocaleString()}</div></div>
     </div>
     <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
-    <div style="text-align:right;font-size:9px;color:#aaa;margin-top:3px">支出率 ${pct}%</div>`;
+    <div style="display:flex;justify-content:space-between;margin-top:3px">
+      <div style="font-size:9px;color:#aaa">${outOfTotal>0?'🎁 収支外: '+outOfTotal.toLocaleString()+'円（ふるさと納税）':''}</div>
+      <div style="font-size:9px;color:#aaa">支出率 ${pct}%</div>
+    </div>`;
 }
 function renderCalendar(mr){
   const y=currentYM.y,m=currentYM.m;
@@ -1195,11 +1401,33 @@ function renderRecords(mr){
   }).join("");
 }
 function renderCatGrid(elId,type,isRepeat){
-  const cats=getCats(type);const iI=type==="income";
-  document.getElementById(elId).innerHTML=cats.map(c=>{
-    const sel=isRepeat?(repeatCat===c.id):(selectedCat===c.id);
-    return'<button class="cat-chip '+(sel?(iI?"selected income-mode":"selected"):"")+"\" onclick=\""+(isRepeat?"selectRepeatCat":"selectCat")+"('"+c.id+"','"+type+"')\">"+'<span class="cat-ic">'+c.icon+"</span>"+'<span class="cat-nm">'+c.label+"</span></button>";
-  }).join("");
+  const el=document.getElementById(elId);if(!el)return;
+  const iI=type==="income";
+  if(type==="income"){
+    // 収入カテゴリは1グリッドのみ
+    el.innerHTML=INCOME_CATS.map(c=>{
+      const sel=isRepeat?(repeatCat===c.id):(selectedCat===c.id);
+      return'<button class="cat-chip '+(sel?(iI?"selected income-mode":"selected"):"")+"\" onclick=\""+(isRepeat?"selectRepeatCat":"selectCat")+"('"+c.id+"','"+type+"')\">"+'<span class="cat-ic">'+c.icon+"</span>"+'<span class="cat-nm">'+c.label+"</span></button>";
+    }).join("");
+    return;
+  }
+  // 支出カテゴリはグループ別
+  const groups=getCatsByGroup();
+  const groupOrder=["変動費","固定費","特別費","悠太立替","ふるさと納税"];
+  let html="";
+  groupOrder.forEach(gname=>{
+    const cats=groups[gname];if(!cats||!cats.length)return;
+    html+=`<div style="font-size:10px;font-weight:800;color:#888;margin:6px 0 4px;padding:2px 4px;background:#f0f0f0;border-radius:4px">${gname}</div>`;
+    html+='<div class="cat-grid" style="margin-bottom:0">';
+    html+=cats.map(c=>{
+      const sel=isRepeat?(repeatCat===c.id):(selectedCat===c.id);
+      return'<button class="cat-chip '+(sel?"selected":"")+"\" onclick=\""+(isRepeat?"selectRepeatCat":"selectCat")+"('"+c.id+"','"+type+"')\">"+'<span class="cat-ic">'+c.icon+"</span>"+'<span class="cat-nm">'+c.label+"</span></button>";
+    }).join("");
+    html+='</div>';
+  });
+  // カスタム追加ボタン
+  html+=`<button onclick="openAddCatModal()" style="width:100%;margin-top:6px;background:#fff;border:1.5px dashed #ccc;border-radius:8px;padding:6px;font-size:11px;color:#666;cursor:pointer;font-weight:700">＋ カテゴリを追加</button>`;
+  el.innerHTML=html;
 }
 function selectCat(id,type){selectedCat=id;renderCatGrid("add-cat-grid",type)}
 function selectRepeatCat(id,type){repeatCat=id;renderCatGrid("repeat-cat-grid",type,true)}
@@ -1214,7 +1442,11 @@ function renderRepeatArea(){
 }
 function renderGraph(){
   const el=document.getElementById("graph-area");
-  const mr=getMonthRecords();
+  const mrAll=getMonthRecords();
+  // 収支外（ふるさと納税5万以上）は分離
+  const mr=mrAll.filter(r=>!isOutOfBalance(r));
+  const outOf=mrAll.filter(r=>isOutOfBalance(r));
+  const outOfTotal=outOf.reduce((s,r)=>s+r.amount,0);
   const inc=mr.filter(r=>r.type==="income").reduce((s,r)=>s+r.amount,0);
   const exp=mr.filter(r=>r.type==="expense").reduce((s,r)=>s+r.amount,0);
   const balance=inc-exp;
@@ -1254,7 +1486,7 @@ function renderGraph(){
     </div>
   </div>`;
   let budgetHtml="";
-  const budgetCats=EXPENSE_CATS.filter(c=>budgets[c.id]>0);
+  const budgetCats=getAllExpenseCats().filter(c=>budgets[c.id]>0);
   if(budgetCats.length){
     budgetHtml=`<div class="graph-card">
       <div class="graph-title">🎯 予算進捗</div>
@@ -1288,6 +1520,7 @@ function renderGraph(){
           <div style="font-size:18px;font-weight:800;color:#e74c3c">-${exp.toLocaleString()}</div>
         </div>
       </div>
+      ${outOfTotal>0?`<div style="background:#e6fff5;border:1px solid #00b894;border-radius:8px;padding:8px 10px;font-size:11px"><strong>🎁 収支外（ふるさと納税5万以上）：${outOfTotal.toLocaleString()}円</strong><br><small style="color:#666">月の収支には含まれていません</small></div>`:''}
     </div>
     ${checkerHtml}
     ${budgetHtml}
@@ -1324,6 +1557,40 @@ function renderGraph(){
     </div>`;
 }
 init();
+
+// ===== PWA Service Worker登録 =====
+if('serviceWorker' in navigator){
+  window.addEventListener('load',()=>{
+    navigator.serviceWorker.register('./sw.js').catch(e=>console.log('SW登録失敗:',e));
+  });
+}
+
+// インストールプロンプト
+let deferredPrompt;
+window.addEventListener('beforeinstallprompt',(e)=>{
+  e.preventDefault();
+  deferredPrompt=e;
+  // 初回アクセス時にインストール案内を表示
+  if(!localStorage.getItem('pwa_install_shown')){
+    setTimeout(()=>{
+      if(confirm('📱 ホーム画面に「家計簿」を追加しますか？\n\nアプリのように使え、ログイン状態が長く保持されます。')){
+        deferredPrompt.prompt();
+        deferredPrompt.userChoice.then(()=>{deferredPrompt=null;});
+      }
+      localStorage.setItem('pwa_install_shown','1');
+    },2000);
+  }
+});
+
+// PWA起動時の判定（standaloneモードならログイン情報をより長く保持）
+const isPWA=window.matchMedia('(display-mode: standalone)').matches||window.navigator.standalone;
+if(isPWA){
+  console.log('PWAモードで起動');
+  // PWAモードならID Token再取得も試みる
+  window.addEventListener('focus',()=>{
+    if(googleUser&&!accessToken){silentTokenRefresh();}
+  });
+}
 </script>
 </body>
 </html>
