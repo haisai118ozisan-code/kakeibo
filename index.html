@@ -103,6 +103,11 @@ body{background:var(--bg);font-family:'Hiragino Sans','Noto Sans JP',sans-serif;
 .settings-title{font-size:12px;font-weight:800;color:var(--dark);margin-bottom:8px}
 .api-inp{width:100%;border:1.5px solid var(--border2);border-radius:8px;padding:8px 10px;font-size:11px;font-family:monospace;background:#f8f8f5;outline:none}
 .fab{position:fixed;bottom:24px;right:16px;width:58px;height:58px;border-radius:50%;background:var(--accent);color:#fff;font-size:28px;border:none;cursor:pointer;box-shadow:0 3px 14px #e74c3c66;display:flex;align-items:center;justify-content:center;z-index:150;-webkit-appearance:none}
+.detail-drill-modal{position:fixed;inset:0;background:#00000088;z-index:300;display:flex;align-items:flex-end}
+.detail-drill-sheet{background:#fff;border-radius:18px 18px 0 0;padding:16px 14px 32px;width:100%;max-height:85vh;overflow-y:auto}
+.drill-item{display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid #f5f5f5;cursor:pointer}
+.drill-item:last-child{border-bottom:none}
+.drill-item:active{background:#fafafa}
 .modal-overlay{position:fixed;inset:0;background:#00000088;z-index:200;display:flex;align-items:flex-end}
 .modal-sheet{background:#fff;border-radius:18px 18px 0 0;padding:16px 14px 32px;width:100%;max-height:92vh;overflow-y:auto}
 .modal-handle{width:36px;height:4px;background:#ddd;border-radius:2px;margin:0 auto 12px}
@@ -113,7 +118,7 @@ body{background:var(--bg);font-family:'Hiragino Sans','Noto Sans JP',sans-serif;
 .form-row{display:flex;gap:8px}
 .form-group{flex:1;margin-bottom:0}
 .amount-wrap{position:relative;margin-bottom:10px}
-.amount-inp{width:100%;border:2px solid var(--border2);border-radius:10px;padding:12px 40px 12px 14px;font-size:22px;font-weight:800;background:#f8f8f5;outline:none;color:var(--text);-webkit-appearance:none}
+.amount-inp{width:100%;border:2px solid var(--border2);border-radius:10px;padding:12px 40px 12px 14px;font-size:22px;font-weight:800;background:#f8f8f5;outline:none;color:var(--text);-webkit-appearance:none;text-align:right;letter-spacing:1px}
 .amount-inp:focus{border-color:var(--accent)}
 .amount-inp.income-mode{border-color:var(--income)}
 .amount-unit{position:absolute;right:12px;top:50%;transform:translateY(-50%);font-size:14px;color:var(--text3);font-weight:700}
@@ -125,14 +130,16 @@ body{background:var(--bg);font-family:'Hiragino Sans','Noto Sans JP',sans-serif;
 .modal-btn.primary{background:var(--accent);color:#fff}
 .modal-btn.primary.income-mode{background:var(--income)}
 .modal-btn.cancel{background:#f0f0f0;color:var(--text2)}
-.cat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:10px}
-.cat-chip{background:#f5f5f5;border:2px solid transparent;border-radius:10px;padding:8px 4px;text-align:center;cursor:pointer;-webkit-appearance:none}
-.cat-chip.selected{background:#fff0f0;border-color:var(--accent)}
-.cat-chip.selected.income-mode{background:#f0fff4;border-color:var(--income)}
-.cat-ic{font-size:20px;display:block}
-.cat-nm{font-size:9px;font-weight:700;color:var(--text2);display:block;margin-top:2px}
+.cat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;margin-bottom:6px}
+.cat-chip{background:#fff;border:1.5px solid #e0e0e0;border-radius:10px;padding:7px 3px 6px;text-align:center;cursor:pointer;-webkit-appearance:none;transition:all 0.15s;box-shadow:0 1px 3px #00000010}
+.cat-chip:active{transform:scale(0.95)}
+.cat-chip.selected{background:#fff0f0;border-color:var(--accent);border-width:2px;box-shadow:0 0 0 3px #e74c3c22}
+.cat-chip.selected.income-mode{background:#f0fff4;border-color:var(--income);box-shadow:0 0 0 3px #27ae6022}
+.cat-ic{font-size:22px;display:block;line-height:1.2}
+.cat-nm{font-size:9px;font-weight:700;color:var(--text2);display:block;margin-top:3px;line-height:1.3;word-break:keep-all;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cat-chip.selected .cat-nm{color:var(--accent)}
 .cat-chip.selected.income-mode .cat-nm{color:var(--income)}
+.cat-group-label{font-size:10px;font-weight:800;color:#fff;padding:3px 8px;border-radius:5px;margin:8px 0 4px;display:inline-block}
 .items-section{background:#f8f8f5;border-radius:8px;padding:8px;margin-bottom:10px}
 .items-title{font-size:11px;font-weight:800;color:var(--text2);margin-bottom:6px}
 .item-row{display:flex;gap:5px;align-items:center;margin-bottom:5px}
@@ -180,6 +187,9 @@ canvas#cc{display:none}
     <button class="month-btn" onclick="changeMonth(-1)">‹</button>
     <div class="month-label" id="month-label"></div>
     <button class="month-btn" onclick="changeMonth(1)">›</button>
+  </div>
+  <div id="spending-alert" style="display:none;background:#fff8eb;border-left:3px solid #f0c040;border-radius:8px;margin:8px 12px 0;padding:8px 10px">
+    <div style="font-size:10px;font-weight:800;color:#cc7700;margin-bottom:4px">⚠️ 支出アラート（平均比150%超）</div>
   </div>
   <div class="summary-card" id="summary-card"></div>
   <div class="calendar-wrap" id="calendar-wrap"></div>
@@ -251,8 +261,12 @@ canvas#cc{display:none}
       <button class="type-btn active expense" id="type-expense" onclick="setType('expense')">💸 支出</button>
       <button class="type-btn" id="type-income" onclick="setType('income')">💰 収入</button>
     </div>
+    <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+      <button id="voice-btn" onclick="startVoiceInput()" style="background:#f8f8f5;border:1.5px solid #ddd;border-radius:10px;padding:7px 12px;font-size:11px;font-weight:700;cursor:pointer;color:var(--text2);white-space:nowrap;-webkit-appearance:none">🎤 音声入力</button>
+      <div id="voice-feedback" style="flex:1;font-size:10px"></div>
+    </div>
     <div class="amount-wrap">
-      <input type="number" inputmode="decimal" class="amount-inp" id="add-amount" placeholder="0">
+      <input type="text" inputmode="numeric" class="amount-inp" id="add-amount" placeholder="0" oninput="fmtAmountInp(this)" onblur="fmtAmountInp(this)">
       <span class="amount-unit">円</span>
     </div>
     <div class="form-row">
@@ -328,7 +342,7 @@ canvas#cc{display:none}
     <label class="form-label">名前</label>
     <input type="text" class="form-input" id="r-name" placeholder="例：家賃、電気代、給与">
     <label class="form-label">金額（円）</label>
-    <input type="number" inputmode="decimal" class="form-input" id="r-amount" placeholder="0">
+    <input type="text" inputmode="numeric" class="form-input" id="r-amount" placeholder="0" oninput="fmtAmountInp(this)" onblur="fmtAmountInp(this)" style="text-align:right">
     <label class="form-label">カテゴリ</label>
     <div class="cat-grid" id="repeat-cat-grid"></div>
     <label class="form-label">繰り返し</label>
@@ -365,6 +379,27 @@ canvas#cc{display:none}
   </div>
 </div>
 <button class="fab" onclick="openAddModal()">＋</button>
+
+<!-- カテゴリ詳細・収支詳細ドリルダウンモーダル -->
+<div class="detail-drill-modal" id="drill-modal" style="display:none" onclick="if(event.target===this)closeDrillModal()">
+  <div class="detail-drill-sheet">
+    <div class="modal-handle" style="width:36px;height:4px;background:#ddd;border-radius:2px;margin:0 auto 10px"></div>
+    <div id="drill-modal-title" style="font-size:14px;font-weight:800;color:var(--dark);margin-bottom:10px;text-align:center"></div>
+    <div id="drill-modal-summary" style="margin-bottom:8px"></div>
+    <div id="drill-modal-list"></div>
+    <button onclick="closeDrillModal()" style="display:block;width:100%;padding:11px;font-size:13px;font-weight:700;border:none;border-radius:10px;background:#f0f0f0;color:#666;margin-top:10px;cursor:pointer">閉じる</button>
+  </div>
+</div>
+
+<!-- AI家計アドバイスモーダル -->
+<div class="detail-drill-modal" id="ai-modal" style="display:none" onclick="if(event.target===this)closeAiModal()">
+  <div class="detail-drill-sheet">
+    <div class="modal-handle" style="width:36px;height:4px;background:#ddd;border-radius:2px;margin:0 auto 10px"></div>
+    <div style="font-size:14px;font-weight:800;color:var(--dark);margin-bottom:10px;text-align:center">🤖 AI家計アドバイス</div>
+    <div id="ai-modal-content"></div>
+    <button onclick="closeAiModal()" style="display:block;width:100%;padding:11px;font-size:13px;font-weight:700;border:none;border-radius:10px;background:#f0f0f0;color:#666;margin-top:10px;cursor:pointer">閉じる</button>
+  </div>
+</div>
 <input type="file" id="file-img" accept="image/*">
 <canvas id="cc"></canvas>
 <script>
@@ -799,7 +834,7 @@ async function runOCRAndAutoCrop(){
       const similar=findSimilarShop(parsed.shop);
       document.getElementById("add-shop").value=similar||parsed.shop;
     }
-    if(parsed.amount&&!document.getElementById("add-amount").value)document.getElementById("add-amount").value=parsed.amount;
+    if(parsed.amount&&!document.getElementById("add-amount").value)document.getElementById("add-amount").value=parsed.amount.toString().replace(/\B(?=(\d{3})+(?!\d))/g,",");
     if(parsed.date)document.getElementById("add-date").value=parsed.date;
     parsed.items.forEach(i=>addItemRow(i.name,i.price));
     if(parsed.shop){selectedCat=detectCat(currentType,parsed.shop);renderCatGrid("add-cat-grid",currentType);}
@@ -874,9 +909,9 @@ function addItemRow(name="",price="",cat=""){
   const catOpts=getAllExpenseCats().map(c=>`<option value="${c.id}" ${cat===c.id?"selected":""}>${c.icon}${c.label}</option>`).join("");
   row.innerHTML=`
     <input type="text" class="item-name" placeholder="商品名" value="${name.replace(/"/g,'&quot;')}" oninput="onItemChange(this)" style="font-size:11px;padding:4px 6px">
-    <input type="number" inputmode="decimal" class="item-price" placeholder="金額" value="${price}" oninput="onItemPriceChange()" style="font-size:11px;padding:4px 6px">
-    <select class="item-cat" style="border:1px solid #ccc;border-radius:6px;padding:3px;font-size:10px;background:#fff;max-width:75px">
-      <option value="">--</option>${catOpts}
+    <input type="text" inputmode="numeric" class="item-price" placeholder="金額" value="${price?price.toLocaleString('ja-JP'):''}" oninput="fmtAmountInp(this);onItemPriceChange()" style="font-size:11px;padding:4px 6px;text-align:right">
+    <select class="item-cat" style="border:1.5px solid #ccc;border-radius:6px;padding:3px 4px;font-size:10px;background:#fff;max-width:80px;color:#333;font-weight:700">
+      <option value="">カテゴリ</option>${catOpts}
     </select>
     <button class="item-del" onclick="removeItemRow(this)">✕</button>`;
   list.appendChild(row);updateItemsTotal();
@@ -893,20 +928,20 @@ function updateItemsTotal(){
   const total=items.reduce((s,i)=>s+i.price,0);
   const amountInp=document.getElementById("add-amount");
   if(total>0){
-    const currentVal=parseFloat(amountInp.value)||0;
+    const currentVal=getRawAmount(amountInp);
     const warn=document.getElementById("items-total-warn");
     if(warn){
       if(currentVal&&currentVal!==total){
-        warn.innerHTML=`<span style="color:#f39c12;font-size:10px;font-weight:700">⚠️ 購入品合計 ${total.toLocaleString()}円 ≠ 記録金額 ${currentVal.toLocaleString()}円 <button onclick="document.getElementById('add-amount').value=${total};document.getElementById('items-total-warn').innerHTML=''" style="background:#f39c12;color:#fff;border:none;border-radius:4px;padding:2px 6px;font-size:9px;cursor:pointer">→合計を反映</button></span>`;
+        warn.innerHTML=`<span style="color:#f39c12;font-size:10px;font-weight:700">⚠️ 購入品合計 ${total.toLocaleString()}円 ≠ 記録金額 ${currentVal.toLocaleString()}円 <button onclick="document.getElementById('add-amount').value=(${total}).toLocaleString('ja-JP');document.getElementById('items-total-warn').innerHTML=''" style="background:#f39c12;color:#fff;border:none;border-radius:4px;padding:2px 6px;font-size:9px;cursor:pointer">→合計を反映</button></span>`;
       }else{warn.innerHTML="";}
     }
-    if(!currentVal)amountInp.value=total;
+    if(!currentVal)amountInp.value=total.toLocaleString('ja-JP');
   }
 }
 function getItems(){
   return Array.from(document.querySelectorAll("#items-list .item-row")).map(row=>{
     const name=row.querySelector(".item-name").value.trim();
-    const price=parseFloat(row.querySelector(".item-price").value)||0;
+    const price=parseFloat((row.querySelector(".item-price").value||"").replace(/[^0-9.]/g,""))||0;
     const cat=row.querySelector(".item-cat")?.value||"";
     return{name,price,cat};
   }).filter(i=>i.name||i.price);
@@ -1019,7 +1054,7 @@ function openAddModal(){
 }
 function closeAddModal(){document.getElementById("add-modal").style.display="none";editingId=null}
 function addRecord(){
-  const amount=parseFloat(document.getElementById("add-amount").value);
+  const amount=getRawAmount(document.getElementById("add-amount"));
   const shop=document.getElementById("add-shop").value.trim();
   const date=document.getElementById("add-date").value;
   if(!amount||amount<=0){alert("金額を入力してください");return}
@@ -1079,7 +1114,7 @@ function editCurrentRecord(){
   const r=records.find(rec=>rec.id===detailId);if(!r)return;
   closeDetailModal();editingId=r.id;currentType=r.type;selectedCat=r.cat;currentRepeat=r.repeat||"none";
   imgDataUrl=r.imgUrl;imgCropped=null;setType(r.type);
-  document.getElementById("add-amount").value=r.amount;document.getElementById("add-shop").value=r.shop||"";
+  document.getElementById("add-amount").value=r.amount.toLocaleString('ja-JP');document.getElementById("add-shop").value=r.shop||"";
   document.getElementById("add-date").value=r.date;document.getElementById("items-list").innerHTML="";
   (r.items||[]).forEach(i=>addItemRow(i.name,i.price,i.cat));
   if(r.imgUrl){document.getElementById("add-img-preview").src=r.imgUrl;document.getElementById("add-img-preview").style.display="block";document.getElementById("clear-img-btn").style.display="block";}
@@ -1110,7 +1145,7 @@ function openRepeatModal(){
 function closeRepeatModal(){document.getElementById("repeat-modal").style.display="none"}
 function addRepeat(){
   const name=document.getElementById("r-name").value.trim();
-  const amount=parseFloat(document.getElementById("r-amount").value);
+  const amount=getRawAmount(document.getElementById("r-amount"));
   const start=document.getElementById("r-startdate").value;
   if(!name){alert("名前を入力してください");return}
   if(!amount||amount<=0){alert("金額を入力してください");return}
@@ -1171,7 +1206,7 @@ function renderAll(){
   document.getElementById("month-label").textContent=lbl;
   const el2=document.getElementById("month-label2");if(el2)el2.textContent=lbl;
   const mr=getMonthRecords();
-  renderSummary(mr);renderCalendar(mr);renderRecords(mr);
+  renderSummary(mr);renderCalendar(mr);renderRecords(mr);checkSpendingAlert();
 }
 function renderSummary(mr){
   const normal=mr.filter(r=>!isOutOfBalance(r));const outOf=mr.filter(r=>isOutOfBalance(r));
@@ -1181,9 +1216,9 @@ function renderSummary(mr){
   const bal=inc-exp;const pct=inc?Math.min(100,Math.round(exp/inc*100)):0;
   document.getElementById("summary-card").innerHTML=`
     <div class="summary-row">
-      <div class="sum-item"><div class="sum-label">収入</div><div class="sum-val income">+${inc.toLocaleString()}</div></div>
+      <div class="sum-item" onclick="drillByType('income')" style="cursor:pointer"><div class="sum-label">収入 ▸</div><div class="sum-val income">+${inc.toLocaleString()}</div></div>
       <div class="sum-divider"></div>
-      <div class="sum-item"><div class="sum-label">支出</div><div class="sum-val expense">-${exp.toLocaleString()}</div></div>
+      <div class="sum-item" onclick="drillByType('expense')" style="cursor:pointer"><div class="sum-label">支出 ▸</div><div class="sum-val expense">-${exp.toLocaleString()}</div></div>
       <div class="sum-divider"></div>
       <div class="sum-item"><div class="sum-label">残高</div><div class="sum-val balance" style="${bal<0?"color:#ff6b6b":""}">${bal>=0?"+":""}${bal.toLocaleString()}</div></div>
     </div>
@@ -1247,7 +1282,8 @@ function renderCatGrid(elId,type,isRepeat){
   let html="";
   groupOrder.forEach(gname=>{
     const cats=groups[gname];if(!cats||!cats.length)return;
-    html+=`<div style="font-size:10px;font-weight:800;color:#888;margin:6px 0 4px;padding:2px 4px;background:#f0f0f0;border-radius:4px">${gname}</div>`;
+    const gcol={"変動費":"#e74c3c","固定費":"#2980b9","特別費":"#8e44ad","悠太立替":"#e67e22","ふるさと納税":"#27ae60"};
+    html+=`<div style="font-size:10px;font-weight:800;color:#fff;margin:8px 0 4px;padding:3px 8px;background:${gcol[gname]||"#999"};border-radius:5px;display:inline-block">${gname}</div>`;
     html+='<div class="cat-grid" style="margin-bottom:0">';
     html+=cats.map(c=>{
       const sel=isRepeat?(repeatCat===c.id):(selectedCat===c.id);
@@ -1277,7 +1313,19 @@ function renderGraph(){
   const inc=mr.filter(r=>r.type==="income").reduce((s,r)=>s+r.amount,0);
   const exp=mr.filter(r=>r.type==="expense").reduce((s,r)=>s+r.amount,0);
   const balance=inc-exp;const savingRate=inc>0?Math.round(balance/inc*100):0;
-  const ec={};mr.filter(r=>r.type==="expense").forEach(r=>{ec[r.cat]=(ec[r.cat]||0)+r.amount});
+  const ec={};mr.filter(r=>r.type==="expense").forEach(r=>{
+  const items=(r.items||[]).filter(i=>i.cat&&i.price>0);
+  if(items.length){
+    // 購入品カテゴリ別に按分
+    let itemsTotal=items.reduce((s,i)=>s+i.price,0);
+    items.forEach(i=>{ec[i.cat]=(ec[i.cat]||0)+i.price;});
+    // 残額（購入品合計が記録金額より少ない場合）は大元カテゴリへ
+    const rem=r.amount-itemsTotal;
+    if(rem>0){ec[r.cat]=(ec[r.cat]||0)+rem;}
+  }else{
+    ec[r.cat]=(ec[r.cat]||0)+r.amount;
+  }
+});
   const sorted=Object.entries(ec).sort((a,b)=>b[1]-a[1]);const maxV=sorted[0]?.[1]||1;
   const months=[];
   for(let i=5;i>=0;i--){
@@ -1297,6 +1345,7 @@ function renderGraph(){
     }).join("")}</div>`;
   }
   el.innerHTML=`
+    <button onclick="openAiAdvice()" style="display:flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:11px;font-size:13px;font-weight:800;border:none;border-radius:12px;background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;margin-bottom:10px;cursor:pointer;box-shadow:0 2px 8px #7c3aed44">🤖 AI家計アドバイスを見る</button>
     <div class="graph-card"><div class="graph-title">💰 今月の収支</div>
       <div style="display:flex;gap:10px;margin-bottom:10px">
         <div style="flex:1;background:#f0fff4;border-radius:8px;padding:10px;text-align:center"><div style="font-size:10px;color:#27ae60;font-weight:700">収入</div><div style="font-size:18px;font-weight:800;color:#27ae60">+${inc.toLocaleString()}</div></div>
@@ -1317,7 +1366,7 @@ function renderGraph(){
     </div>
     ${budgetHtml}
     <div class="graph-card"><div class="graph-title">📊 支出カテゴリ別</div>
-      ${sorted.length?sorted.map(([catId,val])=>{const cat=getCat("expense",catId);return`<div class="bar-row"><div class="bar-label">${cat.icon} ${cat.label}</div><div class="bar-wrap"><div class="bar-fill" style="width:${Math.round(val/maxV*100)}%;background:${cat.color}"></div></div><div class="bar-val">${val.toLocaleString()}円</div></div>`;}).join(""):'<div class="empty-msg">データがありません</div>'}
+      ${sorted.length?sorted.map(([catId,val])=>{const cat=getCat("expense",catId);return`<div class="bar-row" onclick="drillByCat('${catId}')" style="cursor:pointer;border-radius:6px;padding:2px 4px;margin:-2px -4px 4px;transition:background 0.15s" onmouseenter="this.style.background='#f5f5f5'" onmouseleave="this.style.background=''"><div class="bar-label">${cat.icon} ${cat.label}</div><div class="bar-wrap"><div class="bar-fill" style="width:${Math.round(val/maxV*100)}%;background:${cat.color}"></div></div><div class="bar-val">${val.toLocaleString()}円 ▸</div></div>`;}).join(""):'<div class="empty-msg">データがありません</div>'}
     </div>
     <div class="graph-card"><div class="graph-title">📈 月別推移（過去6ヶ月）</div>
       <div class="monthly-chart">${months.map(m=>{const ih=m.inc?Math.max(Math.round(m.inc/maxM*76),3):2;const eh=m.exp?Math.max(Math.round(m.exp/maxM*76),3):2;return`<div class="monthly-col"><div class="monthly-bars"><div class="m-bar" style="height:${ih}px;background:#27ae60"></div><div class="m-bar" style="height:${eh}px;background:#e74c3c"></div></div><div class="monthly-bar-label">${m.label}</div></div>`;}).join("")}</div>
@@ -1327,6 +1376,232 @@ function renderGraph(){
       </div>
     </div>`;
 }
+
+// ===== カンマ入力ユーティリティ =====
+function fmtAmountInp(el){
+  // 数字以外除去してカンマ整形
+  let raw=el.value.replace(/[^0-9]/g,"");
+  if(raw===""){el.value="";return;}
+  el.value=parseInt(raw,10).toLocaleString("ja-JP");
+}
+function getRawAmount(el){
+  // カンマ除去して数値取得
+  return parseFloat((el.value||"").replace(/[^0-9.]/g,""))||0;
+}
+
+// ===== ドリルダウンモーダル =====
+function openDrillModal(title,records_arr,summaryHtml){
+  document.getElementById("drill-modal-title").textContent=title;
+  document.getElementById("drill-modal-summary").innerHTML=summaryHtml||"";
+  const list=document.getElementById("drill-modal-list");
+  if(!records_arr.length){
+    list.innerHTML='<div class="empty-msg">データがありません</div>';
+  }else{
+    list.innerHTML=records_arr.map(r=>{
+      const cat=getCat(r.type,r.cat);
+      const sign=r.type==="income"?"+":"-";
+      const acolor=r.type==="income"?"color:var(--income)":"color:var(--expense)";
+      return`<div class="drill-item" onclick="closeDrillModal();openDetail('${r.id}')">
+        <div style="width:34px;height:34px;border-radius:9px;background:${cat.color}22;display:flex;align-items:center;justify-content:center;font-size:17px;flex-shrink:0">${cat.icon}</div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:12px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r.shop||"（メモなし）"}</div>
+          <div style="font-size:10px;color:#999;margin-top:1px">${r.date} ／ ${cat.label}</div>
+        </div>
+        <div style="font-size:14px;font-weight:800;${acolor};flex-shrink:0">${sign}${r.amount.toLocaleString()}円</div>
+      </div>`;
+    }).join("");
+  }
+  document.getElementById("drill-modal").style.display="flex";
+}
+function closeDrillModal(){document.getElementById("drill-modal").style.display="none";}
+
+// カテゴリ別ドリルダウン（グラフの棒クリック）
+function drillByCat(catId){
+  const mr=getMonthRecords().filter(r=>!isOutOfBalance(r));
+  // 購入品カテゴリが一致するもの + 大元カテゴリが一致して購入品なしのもの
+  const hits=mr.filter(r=>r.type==="expense"&&(
+    r.cat===catId&&!(r.items||[]).some(i=>i.cat&&i.price>0) ||
+    (r.items||[]).some(i=>i.cat===catId&&i.price>0)
+  )).sort((a,b)=>b.date.localeCompare(a.date));
+  const cat=getCat("expense",catId);
+  // 該当カテゴリの実質金額を計算
+  const total=hits.reduce((s,r)=>{
+    const items=(r.items||[]).filter(i=>i.cat&&i.price>0);
+    if(!items.length)return s+r.amount;
+    const itemsTotal=items.reduce((a,i)=>a+i.price,0);
+    const catItems=items.filter(i=>i.cat===catId);
+    const catTotal=catItems.reduce((a,i)=>a+i.price,0);
+    const rem=r.cat===catId?Math.max(0,r.amount-itemsTotal):0;
+    return s+catTotal+rem;
+  },0);
+  const summary=`<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:${cat.color}11;border-radius:8px;margin-bottom:4px">
+    <span style="font-size:20px">${cat.icon}</span>
+    <div>
+      <div style="font-size:11px;color:#999">${currentYM.y}年${currentYM.m}月 ／ ${hits.length}件</div>
+      <div style="font-size:16px;font-weight:800;color:${cat.color}">合計 ${total.toLocaleString()}円</div>
+    </div>
+  </div>`;
+  openDrillModal(cat.icon+" "+cat.label+" の明細",hits,summary);
+}
+
+// 収入・支出ドリルダウン（サマリーカードクリック）
+function drillByType(type){
+  const mr=getMonthRecords().filter(r=>!isOutOfBalance(r));
+  const hits=mr.filter(r=>r.type===type).sort((a,b)=>b.date.localeCompare(a.date));
+  const total=hits.reduce((s,r)=>s+r.amount,0);
+  const color=type==="income"?"var(--income)":"var(--expense)";
+  const label=type==="income"?"収入":"支出";
+  const sign=type==="income"?"+":"-";
+  const summary=`<div style="padding:8px 10px;background:${type==="income"?"#f0fff4":"#fff0f0"};border-radius:8px;margin-bottom:4px">
+    <div style="font-size:11px;color:#999">${currentYM.y}年${currentYM.m}月 ／ ${hits.length}件</div>
+    <div style="font-size:16px;font-weight:800;color:${color}">${sign}${total.toLocaleString()}円</div>
+  </div>`;
+  openDrillModal(label+"の明細",hits,summary);
+}
+
+// ===== AI家計アドバイス（Claude API） =====
+let _aiAdviceCache={};
+async function openAiAdvice(){
+  const ym=currentYM.y+"年"+currentYM.m+"月";
+  document.getElementById("ai-modal-content").innerHTML=`<div style="text-align:center;padding:20px 0;color:#999;font-size:12px">⏳ アドバイス生成中...</div>`;
+  document.getElementById("ai-modal").style.display="flex";
+
+  const cacheKey=currentYM.y+"-"+currentYM.m;
+  if(_aiAdviceCache[cacheKey]){
+    document.getElementById("ai-modal-content").innerHTML=_aiAdviceCache[cacheKey];return;
+  }
+
+  // データ集計
+  const mr=getMonthRecords().filter(r=>!isOutOfBalance(r));
+  const inc=mr.filter(r=>r.type==="income").reduce((s,r)=>s+r.amount,0);
+  const exp=mr.filter(r=>r.type==="expense").reduce((s,r)=>s+r.amount,0);
+  const ec={};mr.filter(r=>r.type==="expense").forEach(r=>{
+  const items=(r.items||[]).filter(i=>i.cat&&i.price>0);
+  if(items.length){
+    // 購入品カテゴリ別に按分
+    let itemsTotal=items.reduce((s,i)=>s+i.price,0);
+    items.forEach(i=>{ec[i.cat]=(ec[i.cat]||0)+i.price;});
+    // 残額（購入品合計が記録金額より少ない場合）は大元カテゴリへ
+    const rem=r.amount-itemsTotal;
+    if(rem>0){ec[r.cat]=(ec[r.cat]||0)+rem;}
+  }else{
+    ec[r.cat]=(ec[r.cat]||0)+r.amount;
+  }
+});
+  const sorted=Object.entries(ec).sort((a,b)=>b[1]-a[1]).slice(0,5);
+  const catSummary=sorted.map(([id,v])=>{const c=getCat("expense",id);return c.label+":"+v.toLocaleString()+"円";}).join("、");
+  const months=[];
+  for(let i=2;i>=0;i--){let y=currentYM.y,m=currentYM.m-i;if(m<=0){m+=12;y--}const mrs=records.filter(r=>{if(!r.date)return false;const[ry,rm]=r.date.split("-").map(Number);return ry===y&&rm===m});months.push({label:m+"月",exp:mrs.filter(r=>r.type==="expense").reduce((s,r)=>s+r.amount,0)});}
+  const trend=months.map(m=>m.label+":"+m.exp.toLocaleString()+"円").join("→");
+
+  const prompt=`あなたは家計アドバイザーです。以下の${ym}の家計データを分析し、具体的で実用的なアドバイスを3点、日本語で箇条書きで答えてください（各点2〜3行以内）。
+【収入】${inc.toLocaleString()}円
+【支出合計】${exp.toLocaleString()}円
+【支出内訳TOP5】${catSummary||"データなし"}
+【過去3ヶ月支出推移】${trend}
+【貯蓄率】${inc>0?Math.round((inc-exp)/inc*100):0}%
+形式：●アドバイスタイトル
+内容（1〜2文）`;
+
+  try{
+    const res=await fetch("https://api.anthropic.com/v1/messages",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        model:"claude-sonnet-4-20250514",
+        max_tokens:800,
+        messages:[{role:"user",content:prompt}]
+      })
+    });
+    const data=await res.json();
+    const text=(data.content||[]).map(b=>b.text||"").join("").trim();
+    const formatted=text.replace(/●(.+)/g,'<div style="font-weight:800;color:var(--dark);margin-top:10px;font-size:12px">● $1</div>').replace(/\n/g,"<br>");
+    const html2=`<div style="font-size:12px;line-height:1.8;color:#444">${formatted}</div>
+      <div style="font-size:9px;color:#bbb;margin-top:12px;text-align:right">🤖 Claude AI生成 ／ ${ym}</div>`;
+    _aiAdviceCache[cacheKey]=html2;
+    document.getElementById("ai-modal-content").innerHTML=html2;
+  }catch(e){
+    document.getElementById("ai-modal-content").innerHTML=`<div style="color:#cc4444;font-size:11px;text-align:center;padding:16px">⚠️ AI接続エラー<br><small>${e.message}</small></div>`;
+  }
+}
+function closeAiModal(){document.getElementById("ai-modal").style.display="none";}
+
+
+// ===== 異常支出アラート =====
+function checkSpendingAlert(){
+  const mr=getMonthRecords().filter(r=>!isOutOfBalance(r)&&r.type==="expense");
+  const ec={};mr.forEach(r=>{
+    const items=(r.items||[]).filter(i=>i.cat&&i.price>0);
+    if(items.length){items.forEach(i=>{ec[i.cat]=(ec[i.cat]||0)+i.price;});const rem=r.amount-items.reduce((s,i)=>s+i.price,0);if(rem>0)ec[r.cat]=(ec[r.cat]||0)+rem;}
+    else ec[r.cat]=(ec[r.cat]||0)+r.amount;
+  });
+  const alerts=[];
+  getAllExpenseCats().forEach(c=>{
+    if(!ec[c.id])return;
+    // 過去3ヶ月平均と比較
+    const avgs=[];
+    for(let i=1;i<=3;i++){
+      let y=currentYM.y,m=currentYM.m-i;if(m<=0){m+=12;y--}
+      const past=records.filter(r=>{if(!r.date||r.type!=="expense")return false;const[ry,rm]=r.date.split("-").map(Number);return ry===y&&rm===m});
+      let sum=0;past.forEach(r=>{
+        const items2=(r.items||[]).filter(i=>i.cat===c.id&&i.price>0);
+        items2.forEach(i=>sum+=i.price);
+        if(r.cat===c.id&&!items2.length)sum+=r.amount;
+      });
+      if(sum>0)avgs.push(sum);
+    }
+    if(avgs.length>=2){
+      const avg=avgs.reduce((a,b)=>a+b,0)/avgs.length;
+      const ratio=ec[c.id]/avg;
+      if(ratio>=1.5&&ec[c.id]-avg>=2000){alerts.push({cat:c,current:ec[c.id],avg,ratio});}
+    }
+  });
+  if(alerts.length){
+    const el=document.getElementById("spending-alert");
+    if(el){el.style.display="block";el.innerHTML=alerts.map(a=>`<div style="display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid #ffe0a0"><span style="font-size:16px">${a.cat.icon}</span><div style="flex:1;font-size:11px"><strong>${a.cat.label}</strong>が平均の<strong style="color:#e74c3c">${Math.round(a.ratio*100)}%</strong><br><span style="font-size:9px;color:#888">今月${a.current.toLocaleString()}円 ／ 平均${Math.round(a.avg).toLocaleString()}円</span></div></div>`).join("");}
+  }else{
+    const el=document.getElementById("spending-alert");if(el)el.style.display="none";
+  }
+}
+
+// ===== 音声入力記録 =====
+let _recognition=null;
+function startVoiceInput(){
+  if(!('webkitSpeechRecognition' in window)&&!('SpeechRecognition' in window)){alert("お使いのブラウザは音声入力非対応です");return;}
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  _recognition=new SR();_recognition.lang="ja-JP";_recognition.continuous=false;_recognition.interimResults=false;
+  const btn=document.getElementById("voice-btn");
+  if(btn){btn.textContent="🔴 聞いています...";btn.style.background="#ffe0e0";}
+  _recognition.onresult=(e)=>{
+    const text=e.results[0][0].transcript;
+    parseVoiceInput(text);
+    if(btn){btn.textContent="🎤 音声入力";btn.style.background="";}
+  };
+  _recognition.onerror=()=>{if(btn){btn.textContent="🎤 音声入力";btn.style.background="";}};
+  _recognition.onend=()=>{if(btn){btn.textContent="🎤 音声入力";btn.style.background="";}};
+  _recognition.start();
+}
+function parseVoiceInput(text){
+  // 「イオンで1500円使った」「食費500円イオン」などを解析
+  const numM=text.match(/([0-9０-９,，]+)\s*円/);
+  const amount=numM?parseInt(numM[1].replace(/[０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0)).replace(/[,，]/g,"")):null;
+  // 店名推測（助詞「で」「に」の前）
+  const shopM=text.match(/(.{1,10})[でにのへ]/);
+  const shop=shopM?shopM[1].trim():"";
+  const catId=detectCat("expense",text+" "+shop);
+  if(amount){
+    document.getElementById("add-amount").value=amount.toLocaleString("ja-JP");
+    if(shop)document.getElementById("add-shop").value=shop;
+    if(catId){selectedCat=catId;renderCatGrid("add-cat-grid","expense");}
+    document.getElementById("add-date").value=new Date().toISOString().split("T")[0];
+    const vf=document.getElementById("voice-feedback");
+    if(vf)vf.innerHTML=`<div style="background:#edfaf3;border:1px solid #2ecc71;border-radius:6px;padding:5px 8px;font-size:10px;margin-top:4px">✅ 認識: 「${text}」</div>`;
+  }else{
+    const vf=document.getElementById("voice-feedback");
+    if(vf)vf.innerHTML=`<div style="background:#fff0f0;border:1px solid #e74c3c;border-radius:6px;padding:5px 8px;font-size:10px;margin-top:4px">⚠️「${text}」 → 金額が読み取れませんでした</div>`;
+  }
+}
+
 init();
 if('serviceWorker' in navigator){
   window.addEventListener('load',()=>{
