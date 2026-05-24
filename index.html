@@ -130,7 +130,7 @@ body{background:var(--bg);font-family:'Hiragino Sans','Noto Sans JP',sans-serif;
 .modal-btn.primary{background:var(--accent);color:#fff}
 .modal-btn.primary.income-mode{background:var(--income)}
 .modal-btn.cancel{background:#f0f0f0;color:var(--text2)}
-.cat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;margin-bottom:6px}
+.cat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;margin-bottom:6px;clear:both;width:100%}
 .cat-chip{background:#fff;border:1.5px solid #e0e0e0;border-radius:10px;padding:7px 3px 6px;text-align:center;cursor:pointer;-webkit-appearance:none;transition:all 0.15s;box-shadow:0 1px 3px #00000010}
 .cat-chip:active{transform:scale(0.95)}
 .cat-chip.selected{background:#fff0f0;border-color:var(--accent);border-width:2px;box-shadow:0 0 0 3px #e74c3c22}
@@ -1279,17 +1279,19 @@ function renderCatGrid(elId,type,isRepeat){
   }
   const groups=getCatsByGroup();
   const groupOrder=["変動費","固定費","特別費","悠太立替","ふるさと納税"];
+  const gcol={"変動費":"#e74c3c","固定費":"#2980b9","特別費":"#8e44ad","悠太立替":"#e67e22","ふるさと納税":"#27ae60"};
   let html="";
   groupOrder.forEach(gname=>{
     const cats=groups[gname];if(!cats||!cats.length)return;
-    const gcol={"変動費":"#e74c3c","固定費":"#2980b9","特別費":"#8e44ad","悠太立替":"#e67e22","ふるさと納税":"#27ae60"};
-    html+=`<div style="font-size:10px;font-weight:800;color:#fff;margin:8px 0 4px;padding:3px 8px;background:${gcol[gname]||"#999"};border-radius:5px;display:inline-block">${gname}</div>`;
-    html+='<div class="cat-grid" style="margin-bottom:0">';
+    // blockコンテナで縦並び（display:inline-blockのラベルがグリッドに被るのを防ぐ）
+    html+=`<div style="display:block;width:100%;margin-top:8px;overflow:hidden">`;
+    html+=`<div style="display:block;font-size:10px;font-weight:800;color:#fff;margin-bottom:5px;padding:3px 10px;background:${gcol[gname]||"#999"};border-radius:5px;width:fit-content;line-height:1.4">${gname}</div>`;
+    html+='<div class="cat-grid" style="margin-bottom:0;display:grid">';
     html+=cats.map(c=>{
       const sel=isRepeat?(repeatCat===c.id):(selectedCat===c.id);
       return'<button class="cat-chip '+(sel?"selected":"")+"\" onclick=\""+(isRepeat?"selectRepeatCat":"selectCat")+"('"+c.id+"','"+type+"')\">"+'<span class="cat-ic">'+c.icon+"</span>"+'<span class="cat-nm">'+c.label+"</span></button>";
     }).join("");
-    html+='</div>';
+    html+='</div></div>';
   });
   html+=`<button onclick="openAddCatModal()" style="width:100%;margin-top:6px;background:#fff;border:1.5px dashed #ccc;border-radius:8px;padding:6px;font-size:11px;color:#666;cursor:pointer;font-weight:700">＋ カテゴリを追加</button>`;
   el.innerHTML=html;
@@ -1603,11 +1605,7 @@ function parseVoiceInput(text){
 }
 
 init();
-if('serviceWorker' in navigator){
-  window.addEventListener('load',()=>{
-    navigator.serviceWorker.register('./sw.js').catch(e=>console.log('SW登録失敗:',e));
-  });
-}
+// ServiceWorker: GitHubPages等のサーバー環境でのみ有効
 let deferredPrompt;
 window.addEventListener('beforeinstallprompt',(e)=>{
   e.preventDefault();deferredPrompt=e;
