@@ -257,13 +257,14 @@ canvas#cc{display:none}
   <div class="modal-sheet">
     <div class="modal-handle"></div>
     <div class="modal-title" id="add-modal-title">支出を記録</div>
+    <!-- 音声入力：常に見える位置 -->
+    <div style="display:flex;gap:6px;align-items:center;margin-bottom:10px">
+      <button id="voice-btn" onclick="startVoiceInput()" style="background:#f0f4ff;border:1.5px solid #7ec8e3;border-radius:10px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;color:#2980b9;white-space:nowrap;-webkit-appearance:none">🎤 音声入力</button>
+      <div id="voice-feedback" style="flex:1;font-size:10px"></div>
+    </div>
     <div class="type-toggle">
       <button class="type-btn active expense" id="type-expense" onclick="setType('expense')">💸 支出</button>
       <button class="type-btn" id="type-income" onclick="setType('income')">💰 収入</button>
-    </div>
-    <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
-      <button id="voice-btn" onclick="startVoiceInput()" style="background:#f8f8f5;border:1.5px solid #ddd;border-radius:10px;padding:7px 12px;font-size:11px;font-weight:700;cursor:pointer;color:var(--text2);white-space:nowrap;-webkit-appearance:none">🎤 音声入力</button>
-      <div id="voice-feedback" style="flex:1;font-size:10px"></div>
     </div>
     <div class="amount-wrap">
       <input type="text" inputmode="numeric" class="amount-inp" id="add-amount" placeholder="0" oninput="fmtAmountInp(this)" onblur="fmtAmountInp(this)">
@@ -281,7 +282,7 @@ canvas#cc{display:none}
       </div>
     </div>
     <label class="form-label">カテゴリ</label>
-    <div class="cat-grid" id="add-cat-grid"></div>
+    <div id="add-cat-grid"></div>
     <div class="items-section">
       <div class="items-title">📋 購入品の記録（金額自動連動）</div>
       <div id="items-list"></div>
@@ -344,7 +345,7 @@ canvas#cc{display:none}
     <label class="form-label">金額（円）</label>
     <input type="text" inputmode="numeric" class="form-input" id="r-amount" placeholder="0" oninput="fmtAmountInp(this)" onblur="fmtAmountInp(this)" style="text-align:right">
     <label class="form-label">カテゴリ</label>
-    <div class="cat-grid" id="repeat-cat-grid"></div>
+    <div id="repeat-cat-grid"></div>
     <label class="form-label">繰り返し</label>
     <div class="repeat-opts" id="repeat-freq-opts">
       <button class="repeat-chip" data-freq="daily" onclick="setRFreq('daily',this)">毎日</button>
