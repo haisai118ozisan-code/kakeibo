@@ -250,6 +250,13 @@ canvas#cc{display:none}
       <div class="settings-title">📊 データ管理</div>
       <button class="modal-btn cancel" style="padding:8px;font-size:12px" onclick="exportCSV()">📥 CSVエクスポート</button>
     </div>
+    <div class="settings-card">
+      <div class="settings-title">🧠 店名学習辞書</div>
+      <div style="font-size:10px;color:#999;margin-bottom:8px">記録するたびに「この店＝このカテゴリ」を自動学習します。次回から入力時に自動でカテゴリが切り替わります。</div>
+      <div id="shop-learn-list" style="max-height:160px;overflow-y:auto;margin-bottom:8px"></div>
+      <button class="modal-btn cancel" style="padding:8px;font-size:12px" onclick="renderShopLearnList()">🔄 一覧を更新</button>
+      <button class="modal-btn cancel" style="padding:8px;font-size:12px;background:#ffe0e0;color:#cc4444" onclick="resetShopLearnMap()">🗑 学習リセット</button>
+    </div>
   </div>
 </div>
 <!-- 記録追加モーダル -->
@@ -273,7 +280,7 @@ canvas#cc{display:none}
     <div class="form-row">
       <div class="form-group">
         <label class="form-label">店名・メモ</label>
-        <input type="text" class="form-input" id="add-shop" placeholder="例：イオン、給与">
+        <input type="text" class="form-input" id="add-shop" placeholder="例：イオン、給与" oninput="onShopInput(this.value)">
         <div id="shop-suggest"></div>
       </div>
       <div class="form-group">
@@ -531,7 +538,7 @@ function init(){
   loadApiKey();
   document.getElementById("add-date").value=selectedDate;
   document.getElementById("r-startdate").value=selectedDate;
-  renderAll();initGoogleAuth();applyDueRepeats();
+  renderAll();initGoogleAuth();applyDueRepeats();learnFromExistingRecords();
 }
 function loadApiKey(){
   try{apiKey=localStorage.getItem(API_SK)||""}catch{}
@@ -687,14 +694,16 @@ async function loadFromDrive(){
       if(json.repeats)repeats=json.repeats;
       if(json.budgets)budgets=json.budgets;
       if(json.customCats)customCats=json.customCats;
+      if(json.shopCatMap)shopCatMap=json.shopCatMap;
       showSyncMsg("✅ 同期完了");
+      learnFromExistingRecords();
     }
   }catch(e){showSyncMsg("⚠️ 読込エラー")}
 }
 async function syncDrive(){
   if(!accessToken){silentTokenRefresh();setTimeout(syncDrive,2000);return}
   try{
-    const body=JSON.stringify({records,repeats,budgets,customCats});
+    const body=JSON.stringify({records,repeats,budgets,customCats,shopCatMap});
     if(driveFileId){
       await fetch("https://www.googleapis.com/upload/drive/v3/files/"+driveFileId+"?uploadType=media",{method:"PATCH",headers:{Authorization:"Bearer "+accessToken,"Content-Type":"application/json"},body});
     }else{
@@ -750,23 +759,196 @@ function suggestShopName(val){
 function useShopSuggest(el){
   document.getElementById("add-shop").value=el.dataset.name;
   document.getElementById("shop-suggest").innerHTML='';
+  // 選択した店名でカテゴリも自動更新
+  const cat=predictCatFromLearning(el.dataset.name,currentType)||detectCat(currentType,el.dataset.name);
+  if(cat&&cat!=="v_other"&&cat!=="other_in"){selectedCat=cat;renderCatGrid("add-cat-grid",currentType);}
+}
+
+function onShopInput(val){
+  if(!val||val.length<2)return;
+  const sug=document.getElementById("shop-suggest");
+  if(!sug)return;
+
+  // ① 学習済み店名サジェスト
+  const learned=getLearnedShops();
+  const norm=normShopKey(val);
+  const matches=learned.filter(k=>{
+    const origKeys=Object.keys(shopCatMap).filter(s=>normShopKey(s)===k||k.includes(normShopKey(s)));
+    return k.includes(norm)||norm.includes(k);
+  });
+
+  // ② 既存記録からの類似店名
+  const similar=findSimilarShop(val);
+
+  // ③ カテゴリ予測（入力中も自動変更）
+  const predicted=predictCatFromLearning(val,currentType);
+  if(predicted&&predicted!=="v_other"){
+    selectedCat=predicted;
+    renderCatGrid("add-cat-grid",currentType);
+  }
+
+  // サジェスト表示
+  let html2="";
+  if(similar&&similar!==val.trim()){
+    const cat=predictCatFromLearning(similar,currentType)||detectCat(currentType,similar);
+    const catInfo=getCat(currentType,cat);
+    html2+=`<div onclick="useShopSuggest(this)" data-name="${similar.replace(/"/g,'&quot;')}" style="background:#fff8eb;border:1px solid #ff9500;border-radius:6px;padding:6px 10px;font-size:11px;cursor:pointer;margin-top:4px;display:flex;align-items:center;gap:6px"><span>${catInfo.icon}</span><span>「${similar}」<small style="color:#999">${catInfo.label}</small></span><span style="color:#e74c3c;font-weight:700;margin-left:auto">→ 使う</span></div>`;
+  }
+  if(html2)sug.innerHTML=html2; else sug.innerHTML="";
 }
 function getCats(type){return type==="income"?INCOME_CATS:getAllExpenseCats()}
 function getCat(type,id){return getCats(type).find(c=>c.id===id)||{label:"その他",icon:"📌",color:"#95a5a6"}}
+// ===== 店名カテゴリ学習辞書 =====
+// 構造: { "正規化店名": { catId: 回数, ... } }
+let shopCatMap={};
+
+// 店名を正規化してキーに使う（全角→半角、スペース除去、小文字）
+function normShopKey(name){
+  if(!name)return "";
+  return name
+    .replace(/[Ａ-Ｚａ-ｚ０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0))
+    .replace(/[ｦ-ﾟ]/g,c=>{
+      const kana="ｦｧｨｩｪｫｬｭｮｯｰｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝﾞﾟ";
+      const full="ヲァィゥェォャュョッーアイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワン゛゜";
+      const i=kana.indexOf(c);return i>=0?full[i]:c;
+    })
+    .toLowerCase().replace(/[\s　・＆&（）()【】]/g,"");
+}
+
+// 記録時に学習（店名→カテゴリの対応を蓄積）
+// 既存の全記録から一括学習（Drive同期後に呼び出し）
+function learnFromExistingRecords(){
+  // Drive読み込み後に呼ぶので loadFromDrive 内でも呼ぶ
+  records.forEach(r=>{
+    if(r.type==="expense"||r.type==="income"){
+      learnShopCat(r.shop,r.cat);
+      // 購入品カテゴリも学習
+      (r.items||[]).forEach(i=>{if(i.name&&i.cat)learnShopCat(i.name,i.cat);});
+    }
+  });
+}
+
+function learnShopCat(shop,catId){
+  if(!shop||!catId||catId==="v_other"||catId==="other_in")return;
+  const key=normShopKey(shop);
+  if(!key||key.length<2)return;
+  if(!shopCatMap[key])shopCatMap[key]={};
+  shopCatMap[key][catId]=(shopCatMap[key][catId]||0)+1;
+  // 部分文字列でも学習（3文字以上のトークンを抽出）
+  // 例：「イオンモール広島府中」→「イオン」「モール」「広島」も学習
+  const tokens=extractTokens(key);
+  tokens.forEach(tok=>{
+    if(!shopCatMap[tok])shopCatMap[tok]={};
+    // 部分一致は信頼度0.5として重み付け
+    shopCatMap[tok][catId]=(shopCatMap[tok][catId]||0)+0.5;
+  });
+}
+
+// 店名から意味のあるトークンを抽出（3文字以上）
+function extractTokens(key){
+  const stopWords=["もーる","ショッピング","センター","ストア","マーケット","スーパー","ホール"];
+  const tokens=[];
+  // 3〜6文字の部分文字列を生成
+  for(let len=3;len<=Math.min(6,key.length-1);len++){
+    for(let i=0;i<=key.length-len;i++){
+      const tok=key.slice(i,i+len);
+      if(!stopWords.includes(tok))tokens.push(tok);
+    }
+  }
+  return [...new Set(tokens)];
+}
+
+// 学習結果からカテゴリを推定（最頻値）
+function predictCatFromLearning(shop,type){
+  const key=normShopKey(shop);
+  if(!key||key.length<2)return null;
+  // 完全一致優先
+  if(shopCatMap[key]){
+    const best=getBestCat(shopCatMap[key],type);
+    if(best)return best;
+  }
+  // 部分一致検索（学習済みキーが入力に含まれる or 入力がキーに含まれる）
+  let bestScore=0,bestCat=null;
+  Object.entries(shopCatMap).forEach(([k,catScores])=>{
+    if(k.length<3)return;
+    if(key.includes(k)||k.includes(key)){
+      const cat=getBestCat(catScores,type);
+      const score=Object.values(catScores).reduce((a,b)=>a+b,0);
+      if(cat&&score>bestScore){bestScore=score;bestCat=cat;}
+    }
+  });
+  return bestCat;
+}
+
+function getBestCat(catScores,type){
+  const entries=Object.entries(catScores).filter(([id])=>{
+    const cats=type==="income"?INCOME_CATS:getAllExpenseCats();
+    return cats.find(c=>c.id===id);
+  });
+  if(!entries.length)return null;
+  return entries.sort((a,b)=>b[1]-a[1])[0][0];
+}
+
+// 学習辞書から全店名リストを返す（サジェスト用）
+function getLearnedShops(){
+  return Object.keys(shopCatMap)
+    .filter(k=>k.length>=2&&Object.values(shopCatMap[k]).reduce((a,b)=>a+b,0)>=1)
+    .sort((a,b)=>{
+      const sa=Object.values(shopCatMap[a]).reduce((x,y)=>x+y,0);
+      const sb=Object.values(shopCatMap[b]).reduce((x,y)=>x+y,0);
+      return sb-sa;
+    });
+}
+
 function detectCat(type,shop){
-  const t=(shop||"").toLowerCase();
+  // ① 学習済み辞書から予測（最優先）
+  const learned=predictCatFromLearning(shop,type);
+  if(learned)return learned;
+  // ② 中国地方拡充版キーワードリスト
+  const t=(shop||"").toLowerCase()
+    .replace(/[Ａ-Ｚａ-ｚ０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0));
   const m={
-    v_food:["スーパー","イオン","コープ","業務","西友","食品","フジ","ゆめタウン","マックスバリュ"],
-    v_eatout:["マクドナルド","吉野家","すき家","レストラン","カフェ","弁当","スターバックス","ガスト","モス"],
-    v_daily:["ドラッグ","ツルハ","マツキヨ","100均","ダイソー","セリア","コスモス","ウエルシア"],
-    v_transport:["ガソリン","エネオス","コスモ","出光","シェル","駐車","電車","バス","タクシー"],
-    f_utility:["電気","ガス","水道","電力"],
-    f_housing:["家賃","管理費"],
-    f_comm:["docomo","au","softbank","楽天モバイル","ahamo","povo","通信"],
-    v_medical:["病院","クリニック","医院"],
-    v_drug:["薬局","調剤"],
-    salary:["給与","給料"],
-    bonus:["賞与","ボーナス"],
+    v_food:[
+      // 全国チェーン
+      "スーパー","イオン","コープ","業務","西友","食品","フジ","マックスバリュ","ライフ",
+      "ヨークマート","ベルク","サミット","オーケー","ロピア","トライアル","ドンキ","業スー",
+      // 中国地方
+      "ゆめタウン","ゆめマート","ハローズ","マルナカ","山陽マルナカ","ニシナ","フレスタ",
+      "デオデオ","ビッグ","big","グリーンモール","サンプラザ","アルク","らら","Rera",
+    ],
+    v_eatout:[
+      "マクドナルド","吉野家","すき家","レストラン","カフェ","弁当","スターバックス",
+      "ガスト","モス","ケンタッキー","kfc","バーガーキング","松屋","なか卯","丸亀",
+      "餃子の王将","大戸屋","やよい軒","サイゼリヤ","ジョリーパスタ","ジョイフル",
+      "コメダ","タリーズ","ドトール","食堂","定食","ラーメン","うどん","そば","寿司",
+    ],
+    v_daily:[
+      "ドラッグ","ツルハ","マツキヨ","100均","ダイソー","セリア","コスモス","ウエルシア",
+      "カワチ","クスリのアオキ","スギ薬局","サンドラッグ","ドラモリ","キャンドゥ",
+      "ザ・ダイソー","ホームセンター","コーナン","カインズ","ビバホーム","ナンバ",
+    ],
+    v_transport:[
+      "ガソリン","エネオス","コスモ","出光","シェル","駐車","電車","バス","タクシー",
+      "eneosセルフ","apollostation","apollostation","広電","JR","jr","高速","etc",
+      "いずみ","emo","エモ","ガソリンスタンド",
+    ],
+    v_beauty:[
+      "美容","ヘアサロン","理容","床屋","cut","カット","パーマ","aeon style",
+      "ネイル","エステ","脱毛","マツエク",
+    ],
+    v_medical:["病院","クリニック","医院","歯科","整形","整骨","接骨","眼科","皮膚科","内科","小児科"],
+    v_drug:["薬局","調剤","ファーマシー","pharmacy"],
+    f_utility:["電気","ガス","水道","電力","中国電力","広島ガス","水道局"],
+    f_housing:["家賃","管理費","地代","駐車場代"],
+    f_comm:[
+      "docomo","au","softbank","楽天モバイル","ahamo","povo","通信","UQモバイル",
+      "yモバイル","ymobile","iijmio","mineo","格安sim",
+    ],
+    v_kids:["保育","幼稚園","学童","習い事","ベネッセ","七田","絵本","おもちゃ","トイザらス"],
+    v_edu:["塾","予備校","英会話","スクール","学習"],
+    salary:["給与","給料","月給","基本給"],
+    bonus:["賞与","ボーナス","一時金"],
+    side:["副業","フリーランス","業務委託","報酬"],
   };
   for(const[id,kws]of Object.entries(m)){if(kws.some(k=>t.includes(k)))return id}
   return type==="income"?"other_in":"v_other";
@@ -1075,6 +1257,8 @@ function addRecord(){
   };
   if(editingId)records=records.map(r=>r.id===editingId?rec:r);
   else records.unshift(rec);
+  // 店名→カテゴリを学習
+  learnShopCat(shop, selectedCat);
   if(currentRepeat!=="none"&&!repeats.find(r=>r.sourceId===rec.id)){
     repeats.push({id:rec.id+"_r",sourceId:rec.id,type:currentType,name:shop,amount,cat:selectedCat,freq:currentRepeat,nextDate:calcNext(date,currentRepeat)});
   }
@@ -1191,7 +1375,7 @@ function switchTab(tab){
   });
   if(tab==="graph")renderGraph();
   if(tab==="repeat")renderRepeatArea();
-  if(tab==="settings"){document.getElementById("api-key-input").value=apiKey;renderLoginArea();renderBudgetList();renderCustomCatList();}
+  if(tab==="settings"){document.getElementById("api-key-input").value=apiKey;renderLoginArea();renderBudgetList();renderCustomCatList();renderShopLearnList();}
 }
 function changeMonth(delta){
   currentYM.m+=delta;
@@ -1298,6 +1482,40 @@ function renderCatGrid(elId,type,isRepeat){
   el.innerHTML=html;
 }
 function selectCat(id,type){selectedCat=id;renderCatGrid("add-cat-grid",type)}
+
+function renderShopLearnList(){
+  const el=document.getElementById("shop-learn-list");if(!el)return;
+  const entries=Object.entries(shopCatMap)
+    .filter(([k,v])=>Object.values(v).reduce((a,b)=>a+b,0)>=1)
+    .sort((a,b)=>Object.values(b[1]).reduce((x,y)=>x+y,0)-Object.values(a[1]).reduce((x,y)=>x+y,0))
+    .slice(0,30);
+  if(!entries.length){el.innerHTML='<div style="font-size:11px;color:#999;text-align:center;padding:8px">まだ学習データがありません</div>';return;}
+  el.innerHTML=entries.map(([key,catScores])=>{
+    const topCat=Object.entries(catScores).sort((a,b)=>b[1]-a[1])[0];
+    const cat=getCat("expense",topCat[0])||getCat("income",topCat[0]);
+    const total=Object.values(catScores).reduce((a,b)=>a+b,0);
+    return`<div style="display:flex;align-items:center;gap:6px;padding:4px 6px;border-bottom:1px solid #f5f5f5;font-size:11px">
+      <span style="font-size:14px">${cat?.icon||"📌"}</span>
+      <span style="flex:1;font-weight:700;color:#333">${key}</span>
+      <span style="font-size:10px;color:#666">${cat?.label||topCat[0]}</span>
+      <span style="font-size:9px;color:#bbb">${Math.round(total)}回</span>
+      <button onclick="deleteShopLearn('${key}')" style="background:none;border:none;color:#ddd;font-size:13px;cursor:pointer;padding:0 2px">✕</button>
+    </div>`;
+  }).join("");
+}
+
+function deleteShopLearn(key){
+  delete shopCatMap[key];
+  renderShopLearnList();
+  if(accessToken)syncDrive();
+}
+
+function resetShopLearnMap(){
+  if(!confirm("学習データを全削除しますか？"))return;
+  shopCatMap={};
+  renderShopLearnList();
+  if(accessToken)syncDrive();
+}
 function selectRepeatCat(id,type){repeatCat=id;renderCatGrid("repeat-cat-grid",type,true)}
 function renderRepeatArea(){
   const el=document.getElementById("repeat-area");
