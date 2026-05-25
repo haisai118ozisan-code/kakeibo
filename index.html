@@ -1725,15 +1725,29 @@ async function openAiAdvice(){
 内容（1〜2文）`;
 
   try{
+    if(!apiKey){
+      document.getElementById("ai-modal-content").innerHTML=`<div style="color:#cc4444;font-size:12px;text-align:center;padding:16px;line-height:1.6">
+        ⚠️ APIキーが設定されていません<br>
+        <small style="color:#999">設定タブで Claude APIキーを入力してください</small>
+      </div>`;
+      return;
+    }
     const res=await fetch("https://api.anthropic.com/v1/messages",{
       method:"POST",
-      headers:{"Content-Type":"application/json"},
+      headers:{
+        "Content-Type":"application/json",
+        "x-api-key":apiKey
+      },
       body:JSON.stringify({
         model:"claude-sonnet-4-20250514",
         max_tokens:800,
         messages:[{role:"user",content:prompt}]
       })
     });
+    if(!res.ok){
+      const err=await res.text();
+      throw new Error(`${res.status}: ${err.substring(0,100)}`);
+    }
     const data=await res.json();
     const text=(data.content||[]).map(b=>b.text||"").join("").trim();
     const formatted=text.replace(/●(.+)/g,'<div style="font-weight:800;color:var(--dark);margin-top:10px;font-size:12px">● $1</div>').replace(/\n/g,"<br>");
@@ -1742,7 +1756,12 @@ async function openAiAdvice(){
     _aiAdviceCache[cacheKey]=html2;
     document.getElementById("ai-modal-content").innerHTML=html2;
   }catch(e){
-    document.getElementById("ai-modal-content").innerHTML=`<div style="color:#cc4444;font-size:11px;text-align:center;padding:16px">⚠️ AI接続エラー<br><small>${e.message}</small></div>`;
+    const msg=e.message||"不明なエラー";
+    document.getElementById("ai-modal-content").innerHTML=`<div style="color:#cc4444;font-size:11px;text-align:center;padding:16px;line-height:1.6">
+      ⚠️ AI接続エラー<br>
+      <small style="color:#999">${msg}</small><br>
+      <small style="color:#bbb;margin-top:8px;display:block">設定タブでAPIキーを確認してください</small>
+    </div>`;
   }
 }
 function closeAiModal(){document.getElementById("ai-modal").style.display="none";}
